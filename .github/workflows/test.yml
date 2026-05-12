@@ -1,0 +1,11 @@
+name: test
+on: [push, pull_request]
+jobs:
+  swift-test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+      - run: swift test --package-path TapedeckCore
