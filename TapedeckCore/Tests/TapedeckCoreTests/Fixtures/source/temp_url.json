@@ -1,0 +1,5 @@
+{
+  "status": 0,
+  "temp_url": "https://euc1-prod-plaud-bucket.s3.amazonaws.com/audiofiles/831cd03902e3336766fbe551874ef6f7.ogg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAEXAMPLEEXAMPLE00%2F20260511%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20260511T120000Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=EXAMPLE-SESSION-TOKEN&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000",
+  "temp_url_opus": null
+}
