@@ -1,1 +1,23 @@
+# Xcode
+xcuserdata/
+*.xcworkspace
+DerivedData/
+build/
+*.profraw
+*.xcuserstate
+
+# XcodeGen generates these
+Tapedeck.xcodeproj/
+
+# Swift Package Manager
+.build/
+Package.resolved
+.swiftpm/
+
+# Tooling
+scripts/sparkle-tools/
+
+# Secrets / local-only
+Tapedeck/Config.plist
+.env
 .env.*
