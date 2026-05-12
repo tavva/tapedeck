@@ -75,4 +75,9 @@ public struct StageError: Equatable, Sendable {
     public var occurredAt: Int64
     public var attempt: Int
     public var message: String
+
+    public init(sourceId: String, stage: SyncStage, occurredAt: Int64, attempt: Int, message: String) {
+        self.sourceId = sourceId; self.stage = stage; self.occurredAt = occurredAt
+        self.attempt = attempt; self.message = message
+    }
 }

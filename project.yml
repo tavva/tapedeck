@@ -1,0 +1,83 @@
+name: Tapedeck
+options:
+  deploymentTarget:
+    macOS: "14.0"
+  bundleIdPrefix: com.benphillips.tapedeck
+settings:
+  SWIFT_VERSION: "6.0"
+  DEVELOPMENT_TEAM: "C8Q84FVJHL"
+  CODE_SIGN_STYLE: Manual
+  CODE_SIGN_IDENTITY: "Developer ID Application"
+  ENABLE_HARDENED_RUNTIME: YES
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.6.0"
+  TapedeckCore:
+    path: TapedeckCore
+targets:
+  Tapedeck:
+    type: application
+    platform: macOS
+    sources:
+      - path: Tapedeck
+        excludes:
+          - "Tests/**"
+    info:
+      path: Tapedeck/Info.plist
+      properties:
+        CFBundleShortVersionString: 0.1.0
+        CFBundleVersion: 0.1.0
+        SUEnableAutomaticChecks: true
+        SUFeedURL: https://tavva.github.io/tapedeck/appcast.xml
+        SUPublicEDKey: REPLACE_ME_WITH_OUTPUT_OF_generate_keys
+    settings:
+      INFOPLIST_FILE: Tapedeck/Info.plist
+      PRODUCT_BUNDLE_IDENTIFIER: com.benphillips.tapedeck
+      PRODUCT_NAME: Tapedeck
+    entitlements:
+      path: Tapedeck/Tapedeck.entitlements
+      properties:
+        com.apple.security.network.client: true
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.benphillips.tapedeck
+    dependencies:
+      - package: Sparkle
+      - package: TapedeckCore
+      - target: TapedeckSyncHelper
+        embed: true
+        codeSign: true
+        copy:
+          destination: executables
+  TapedeckSyncHelper:
+    type: tool
+    platform: macOS
+    sources:
+      - TapedeckSyncHelper
+    info:
+      path: TapedeckSyncHelper/Info.plist
+      properties:
+        CFBundleShortVersionString: 0.1.0
+        CFBundleVersion: 0.1.0
+    settings:
+      INFOPLIST_FILE: TapedeckSyncHelper/Info.plist
+      PRODUCT_BUNDLE_IDENTIFIER: com.benphillips.tapedeck.synchelper
+      PRODUCT_NAME: TapedeckSyncHelper
+    entitlements:
+      path: TapedeckSyncHelper/TapedeckSyncHelper.entitlements
+      properties:
+        com.apple.security.network.client: true
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.benphillips.tapedeck
+    dependencies:
+      - package: TapedeckCore
+  TapedeckTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tapedeck/Tests
+    dependencies:
+      - target: Tapedeck
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      PRODUCT_BUNDLE_IDENTIFIER: com.benphillips.tapedeck.tests
