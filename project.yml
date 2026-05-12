@@ -30,7 +30,7 @@ targets:
         CFBundleVersion: 0.1.0
         SUEnableAutomaticChecks: true
         SUFeedURL: https://tavva.github.io/tapedeck/appcast.xml
-        SUPublicEDKey: REPLACE_ME_WITH_OUTPUT_OF_generate_keys
+        SUPublicEDKey: nT9yOEpXACVlDmRZXGGXjQWNNp38iwH4V3OOJyjNlsc=
     settings:
       INFOPLIST_FILE: Tapedeck/Info.plist
       PRODUCT_BUNDLE_IDENTIFIER: com.benphillips.tapedeck
