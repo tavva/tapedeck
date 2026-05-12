@@ -1,0 +1,33 @@
+{
+  "status": 0,
+  "msg": "success",
+  "data": [
+    {
+      "id": "831cd03902e3336766fbe551874ef6f7",
+      "filename": "2026-05-11 10:30:00",
+      "keywords": [],
+      "filesize": 32623616,
+      "filetype": "",
+      "fullname": "831cd03902e3336766fbe551874ef6f7.ogg",
+      "file_md5": "35773b2c6c41259a6475564146180d8b",
+      "ori_ready": false,
+      "version": 1778573938,
+      "version_ms": 1778573938000,
+      "edit_time": 1778573938,
+      "edit_from": "android",
+      "is_trash": false,
+      "start_time": 1778491800000,
+      "end_time": 1778499446000,
+      "duration": 7646000,
+      "timezone": 1,
+      "zonemins": 0,
+      "scene": 1,
+      "filetag_id_list": [],
+      "serial_number": "8810B00000000001",
+      "is_trans": false,
+      "is_summary": false,
+      "is_markmemo": false,
+      "wait_pull": 0
+    }
+  ]
+}
