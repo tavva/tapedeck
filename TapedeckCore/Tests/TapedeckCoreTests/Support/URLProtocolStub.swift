@@ -1,36 +1,47 @@
 // ABOUTME: Test helper that intercepts URLSession requests and replays canned responses.
-// ABOUTME: Register handlers per-test with URLProtocolStub.register(host:path:handler:).
+// ABOUTME: Handlers are keyed per-session (via an injected header) so suites can run in parallel.
 
 import Foundation
 
+private let stubSessionHeader = "X-Tapedeck-Stub-Session"
+
 final class URLProtocolStub: URLProtocol, @unchecked Sendable {
     typealias Handler = (URLRequest) -> (HTTPURLResponse, Data)
-    nonisolated(unsafe) private static var handlers: [(String, (URLRequest) -> Bool, Handler)] = []
+
+    nonisolated(unsafe) private static var sessionHandlers: [String: [(String, (URLRequest) -> Bool, Handler)]] = [:]
     nonisolated(unsafe) private static let lock = NSLock()
 
-    static func reset() {
-        lock.lock(); defer { lock.unlock() }
-        handlers = []
+    /// Returns a fresh session and a session id; handlers registered with that id
+    /// are visible only to requests made through this session.
+    static func makeSession() -> (URLSession, String) {
+        let sessionId = UUID().uuidString
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [URLProtocolStub.self]
+        var headers = config.httpAdditionalHeaders ?? [:]
+        headers[stubSessionHeader] = sessionId
+        config.httpAdditionalHeaders = headers
+        lock.lock(); sessionHandlers[sessionId] = []; lock.unlock()
+        return (URLSession(configuration: config), sessionId)
     }
 
-    static func register(_ name: String,
+    static func register(sessionId: String, _ name: String,
                          matching: @escaping (URLRequest) -> Bool,
                          handler: @escaping Handler) {
         lock.lock(); defer { lock.unlock() }
-        handlers.append((name, matching, handler))
+        sessionHandlers[sessionId, default: []].append((name, matching, handler))
     }
 
-    static func ephemeralSession() -> URLSession {
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [URLProtocolStub.self]
-        return URLSession(configuration: config)
+    static func clear(sessionId: String) {
+        lock.lock(); defer { lock.unlock() }
+        sessionHandlers.removeValue(forKey: sessionId)
     }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        let sessionId = request.value(forHTTPHeaderField: stubSessionHeader) ?? ""
         Self.lock.lock()
-        let match = Self.handlers.first { $0.1(request) }
+        let match = Self.sessionHandlers[sessionId]?.first { $0.1(request) }
         Self.lock.unlock()
         guard let match else {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
