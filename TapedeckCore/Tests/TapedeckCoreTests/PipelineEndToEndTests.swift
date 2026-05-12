@@ -1,0 +1,137 @@
+// ABOUTME: Drives one full Pipeline cycle through stubbed clients. Assertions cover
+// ABOUTME: rows fully populated, on-disk artefacts present, project folder contents.
+
+import Testing
+import Foundation
+@testable import TapedeckCore
+
+@Suite("Pipeline end-to-end")
+struct PipelineEndToEndTests {
+    private func makeLayout() -> Layout {
+        let tmp = FileManager.default.temporaryDirectory
+            .appending(path: "tapedeck-e2e-\(UUID().uuidString)")
+        return Layout(
+            userRoot: tmp.appending(path: "user"),
+            supportRoot: tmp.appending(path: "support"),
+            logsRoot: tmp.appending(path: "logs"))
+    }
+
+    private func wrapInGeminiEnvelope(_ inner: String) -> Data {
+        let envelope: [String: Any] = ["candidates": [["content": ["parts": [["text": inner]]]]]]
+        return try! JSONSerialization.data(withJSONObject: envelope)
+    }
+
+    @Test func freshCycleProducesArtefactsAndLinks() async throws {
+        let layout = makeLayout()
+        let store = try Store.openInMemory()
+        let projects = ProjectRepository(store: store)
+        try projects.insert(.init(id: "homeschool-mvp", displayName: "Homeschool MVP",
+                                  description: "Curriculum", createdAt: 1, archivedAt: nil))
+
+        let (session, sid) = URLProtocolStub.makeSession()
+        defer { URLProtocolStub.clear(sessionId: sid) }
+        let audioBytes = Data(repeating: 0x42, count: 8)
+
+        URLProtocolStub.register(sessionId: sid, "list", matching: { req in
+            req.url?.path.contains("/file/simple/web") == true
+        }, handler: { req in
+            URLProtocolStub.jsonResponse(for: req, fixture: "source/list_page1.json")
+        })
+        URLProtocolStub.register(sessionId: sid, "temp", matching: { req in
+            req.url?.path.contains("/file/temp-url/") == true
+        }, handler: { req in
+            URLProtocolStub.jsonResponse(for: req, fixture: "source/temp_url.json")
+        })
+        URLProtocolStub.register(sessionId: sid, "metadata", matching: { req in
+            req.url?.path == "/file/list" && req.httpMethod == "POST"
+        }, handler: { req in
+            URLProtocolStub.jsonResponse(for: req, fixture: "source/raw_metadata.json")
+        })
+        URLProtocolStub.register(sessionId: sid, "s3", matching: { req in
+            req.url?.host?.contains("amazonaws.com") == true
+        }, handler: { req in
+            let resp = HTTPURLResponse(url: req.url!, statusCode: 200,
+                                       httpVersion: "HTTP/1.1",
+                                       headerFields: ["Content-Type": "audio/ogg"])!
+            return (resp, audioBytes)
+        })
+        URLProtocolStub.register(sessionId: sid, "deepgram", matching: { req in
+            req.url?.host == "api.deepgram.com"
+        }, handler: { req in
+            URLProtocolStub.jsonResponse(for: req, fixture: "deepgram/short_recording.json")
+        })
+        URLProtocolStub.register(sessionId: sid, "gemini", matching: { req in
+            req.url?.host == "generativelanguage.googleapis.com"
+        }, handler: { req in
+            let inner = try! String(contentsOf: Bundle.module.url(
+                forResource: "Fixtures/gemini/high_confidence", withExtension: "json")!,
+                encoding: .utf8)
+            let body = wrapInGeminiEnvelope(inner.trimmingCharacters(in: .whitespacesAndNewlines))
+            let resp = HTTPURLResponse(url: req.url!, statusCode: 200,
+                                       httpVersion: "HTTP/1.1",
+                                       headerFields: ["Content-Type": "application/json"])!
+            return (resp, body)
+        })
+
+        let now: @Sendable () -> Int64 = { 999 }
+        let source = SourceClient(token: "t.eyJzdWIiOiJ4In0.sig",
+                                  host: URL(string: "https://api-euc1.plaud.ai")!,
+                                  session: session)
+        let pipeline = Pipeline(deps: .init(
+            store: store, layout: layout,
+            source: source,
+            deepgram: DeepgramClient(apiKey: "dg", session: session),
+            gemini: GeminiClient(apiKey: "gm", session: session),
+            logger: DiscardingLog(),
+            now: now))
+
+        try await pipeline.runCycle()
+
+        // Recordings are fully populated.
+        let recordings = RecordingRepository(store: store)
+        #expect(try recordings.count() == 2)
+        let needingDownload = try recordings.recordingsNeedingDownload()
+        #expect(needingDownload.isEmpty)
+        let needingClassification = try recordings.recordingsNeedingClassification()
+        #expect(needingClassification.isEmpty)
+        let needingRelink = try recordings.recordingsNeedingRelink()
+        #expect(needingRelink.isEmpty)
+
+        // Audio + sidecars on disk under the date dir, and project links.
+        let projectDir = layout.projectDir(slug: "homeschool-mvp")
+        let entries = (try? FileManager.default.contentsOfDirectory(atPath: projectDir.path)) ?? []
+        #expect(entries.count >= 3)  // 2 recordings × (txt + json + symlink) but at minimum the high-conf assignments
+
+        // last_sync_at was touched.
+        let last = try store.read { db in
+            try Int64.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key = 'last_sync_at'")
+        }
+        #expect(last == 999)
+    }
+
+    @Test func tokenExpiredFromAppStateAbortsBeforeNetwork() async throws {
+        let layout = makeLayout()
+        let store = try Store.openInMemory()
+        try store.write { db in
+            try db.execute(sql: "INSERT INTO app_state(key,value) VALUES('token_status', 'expired')")
+        }
+        let (session, sid) = URLProtocolStub.makeSession()
+        defer { URLProtocolStub.clear(sessionId: sid) }
+        // No handlers registered — any network call would fail, but ensureToken should
+        // throw before we touch the network.
+        let pipeline = Pipeline(deps: .init(
+            store: store, layout: layout,
+            source: SourceClient(token: "t.eyJzdWIiOiJ4In0.sig",
+                                 host: URL(string: "https://api-euc1.plaud.ai")!, session: session),
+            deepgram: DeepgramClient(apiKey: "dg", session: session),
+            gemini: GeminiClient(apiKey: "gm", session: session),
+            logger: DiscardingLog(),
+            now: { 1 }))
+        do {
+            try await pipeline.runCycle()
+            Issue.record("expected tokenExpired")
+        } catch Pipeline.PipelineError.tokenExpired {
+            // expected
+        }
+    }
+}
