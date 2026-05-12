@@ -1,0 +1,7 @@
+{
+  "iss": "redacted",
+  "sub": "redacted",
+  "region": "aws:eu-central-1",
+  "exp": 1799266417,
+  "iat": 1773346417
+}
