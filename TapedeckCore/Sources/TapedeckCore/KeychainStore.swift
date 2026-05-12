@@ -8,8 +8,22 @@ public struct KeychainStore: Sendable {
     /// Resolved access group (team-prefixed) — must match both binaries' entitlements verbatim.
     public static let sharedAccessGroup = "C8Q84FVJHL.com.benphillips.tapedeck"
 
-    /// Production wiring used by both binaries.
-    public static let shared = KeychainStore(accessGroup: sharedAccessGroup)
+    /// Production wiring used by both binaries. Probes once whether the data-protection
+    /// keychain is reachable with the team-prefixed access group; falls back to the
+    /// legacy file-based keychain (shared automatically between same-user processes)
+    /// if not — needed for ad-hoc-signed local builds that lack a provisioning profile.
+    public static let shared: KeychainStore = {
+        let candidate = KeychainStore(accessGroup: sharedAccessGroup)
+        let probeService = "tapedeck.entitlement.probe"
+        do {
+            _ = try candidate.get(service: probeService, account: "default")
+            return candidate
+        } catch KeychainError.osStatus(let status) where status == errSecMissingEntitlement {
+            return KeychainStore(accessGroup: nil)
+        } catch {
+            return candidate
+        }
+    }()
 
     /// nil disables access-group scoping — only safe in unsigned test processes.
     public let accessGroup: String?
