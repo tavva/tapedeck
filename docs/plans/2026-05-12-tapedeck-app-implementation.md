@@ -35,6 +35,16 @@ The "Expected" line under each `Run:` is what success looks like — if the actu
 
 These artefacts unblock every later phase that touches the Plaud API. They must be committed before Phase 7 (which deletes the old downloader) and before any of the bootstrap moves in design §7.
 
+### Task 0.0: Create fixture directories
+
+```bash
+mkdir -p TapedeckCore/Tests/TapedeckCoreTests/Fixtures/source \
+         TapedeckCore/Tests/TapedeckCoreTests/Fixtures/deepgram \
+         TapedeckCore/Tests/TapedeckCoreTests/Fixtures/gemini
+```
+
+No commit yet — Git doesn't track empty directories. The first fixture commit in Task 0.1 creates them implicitly.
+
 ### Task 0.1: Capture a real `/file/simple/web` listing response
 
 **Files:**
@@ -162,21 +172,30 @@ git commit -m "test(fixtures): capture Plaud raw metadata response"
 **Files:**
 - Create: `TapedeckCore/Tests/TapedeckCoreTests/Fixtures/source/jwt_payload_redacted.json`
 
-**Step 1: Decode the user's JWT payload, scrub identifiers**
+**Step 1: Decode the user's JWT payload (base64url, with padding), scrub identifiers**
 
 ```bash
 TOKEN=$(cat ~/.config/plaud/token)
-echo "$TOKEN" | cut -d. -f2 | base64 -d 2>/dev/null | jq . > /tmp/raw.json
+PAYLOAD=$(echo "$TOKEN" | cut -d. -f2)
+# JWT base64url has no padding. Pad up to the next multiple of 4 (0–3 '=' chars),
+# then translate the URL-safe alphabet to standard base64.
+NEED=$(( (4 - ${#PAYLOAD} % 4) % 4 ))
+PADDING=""
+if [ "$NEED" -gt 0 ]; then PADDING=$(printf '%*s' "$NEED" '' | tr ' ' '='); fi
+PADDED=$(printf '%s%s' "$PAYLOAD" "$PADDING" | tr '_-' '/+')
+echo "$PADDED" | base64 -D 2>/dev/null | jq . > /tmp/raw.json
 # Inspect /tmp/raw.json; identify the region field — likely 'aws:region' or 'region'.
-# Build the redacted version preserving structural keys (especially the region claim)
-# but replacing any user-identifying strings with placeholders.
+# Build a redacted version preserving the region claim verbatim (incl. the 'aws:' prefix
+# if present — SourceClient.regionToHost handles both forms).
 jq '{
   iss: "redacted",
   sub: "redacted",
-  region: .region // ."aws:region" // "eu-central-1",
+  region: .region // ."aws:region",
+  "aws:region": ."aws:region",
   exp: .exp,
   iat: .iat
-}' /tmp/raw.json > TapedeckCore/Tests/TapedeckCoreTests/Fixtures/source/jwt_payload_redacted.json
+} | with_entries(select(.value != null))' /tmp/raw.json \
+  > TapedeckCore/Tests/TapedeckCoreTests/Fixtures/source/jwt_payload_redacted.json
 rm /tmp/raw.json
 ```
 
@@ -212,14 +231,16 @@ Then POST the shortest one to Deepgram (Ben must have an API key in his shell):
 
 ```bash
 SHORT=$(find ~/Plaud/audio -type f \( -name '*.ogg' -o -name '*.mp3' -o -name '*.m4a' -o -name '*.wav' \) -print0 | xargs -0 ls -lS | tail -1 | awk '{print $NF}')
-curl -sSf 'https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&diarize=true' \
+curl -sSf 'https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&diarize=true&utterances=true' \
   -H "Authorization: Token ${DEEPGRAM_API_KEY}" \
   -H 'Content-Type: audio/*' \
   --data-binary "@${SHORT}" \
   | jq . > TapedeckCore/Tests/TapedeckCoreTests/Fixtures/deepgram/short_recording.json
 ```
 
-**Step 2: Gemini** — hand-author the four expected response shapes:
+The fixture must include `results.utterances[]` because `DeepgramClient` decodes that field. If the captured response doesn't have it, re-run with `utterances=true` (it has been on by default since model nova-2; verify against your account's response).
+
+**Step 2: Gemini** — hand-author the four classifier *output* payloads. These are the inner JSON strings the model returns; the `GeminiClientTests` wrap each one in a stub `generateContent` envelope before serving it, because `GeminiClient.classify` parses the standard Gemini response shape `{ candidates: [{ content: { parts: [{ text: "<this JSON>" }] }}] }`. Saving just the inner JSON keeps fixtures tiny and intent obvious.
 
 ```bash
 cat > TapedeckCore/Tests/TapedeckCoreTests/Fixtures/gemini/high_confidence.json <<'EOF'
@@ -534,7 +555,42 @@ targets:
 </plist>
 ```
 
-**Step 7: Generate the project and verify it builds**
+**Step 7: Create minimum-buildable source files for each target**
+
+`Tapedeck/Placeholder.swift` — must have an `@main` entry so the `application` product links:
+
+```swift
+// ABOUTME: Minimum-viable SwiftUI entry so the Tapedeck app target builds.
+// ABOUTME: Replaced by TapedeckApp.swift in Phase 7. Window is intentionally bare.
+
+import SwiftUI
+
+@main
+struct TapedeckPlaceholderApp: App {
+    var body: some Scene {
+        Window("Tapedeck", id: "main") { Text("Tapedeck — scaffolding") }
+    }
+}
+```
+
+`TapedeckSyncHelper/main.swift` — tool targets require the entry file to be named `main.swift`:
+
+```swift
+// ABOUTME: Placeholder CLI entry. Replaced by the real pipeline driver in Phase 6.
+// ABOUTME: File must be called main.swift so the tool target produces an executable.
+
+import Foundation
+print("tapedeck-sync-helper placeholder")
+```
+
+`Tapedeck/Tests/Smoke.swift` (covers the `TapedeckTests` source phase):
+
+```swift
+import XCTest
+final class SmokeTests: XCTestCase { func testBuilds() { XCTAssertTrue(true) } }
+```
+
+**Step 8: Generate the project and verify it builds**
 
 ```bash
 brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
@@ -543,27 +599,7 @@ xcodebuild -project Tapedeck.xcodeproj -scheme Tapedeck -configuration Debug bui
 xcodebuild -project Tapedeck.xcodeproj -scheme TapedeckSyncHelper -configuration Debug build -quiet
 ```
 
-Expected: both schemes build with no errors. (Source files are empty placeholders — that's fine; XcodeGen will have wired the targets.)
-
-**Step 8: Create one no-op source per target so the build resolves a product**
-
-`Tapedeck/Placeholder.swift`:
-```swift
-// ABOUTME: Placeholder so XcodeGen's source phase has a file to compile.
-// ABOUTME: Replaced by TapedeckApp.swift in Phase 7.
-
-import Foundation
-```
-
-`TapedeckSyncHelper/Placeholder.swift`:
-```swift
-// ABOUTME: Placeholder so the tool target produces an executable.
-// ABOUTME: Replaced by main.swift in Phase 6.
-
-print("tapedeck-sync-helper placeholder")
-```
-
-Re-run Step 7 expectations.
+Expected: both schemes build cleanly. The UI launches as a blank window if you double-click the resulting .app — that's expected for the placeholder.
 
 **Step 9: Commit**
 
@@ -632,31 +668,36 @@ import Foundation
 import GRDB
 
 public final class Store: @unchecked Sendable {
-    public let dbPool: DatabasePool
+    // GRDB's DatabasePool gives concurrent reads + serialised writes for file-backed DBs.
+    // DatabaseQueue is required for in-memory storage; we expose both behind DatabaseWriter.
+    public let writer: any DatabaseWriter
 
-    private init(pool: DatabasePool) throws {
-        self.dbPool = pool
-        try Self.migrator.migrate(pool)
+    private init(writer: any DatabaseWriter) throws {
+        self.writer = writer
+        try Self.migrator.migrate(writer)
     }
 
     public static func open(at url: URL) throws -> Store {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                 withIntermediateDirectories: true)
         var config = Configuration()
-        config.journalMode = .wal
+        // GRDB enables WAL automatically for DatabasePool; setting it explicitly documents intent.
         let pool = try DatabasePool(path: url.path, configuration: config)
-        return try Store(pool: pool)
+        return try Store(writer: pool)
     }
 
+    /// In-memory store backed by DatabaseQueue (DatabasePool does not support `:memory:`).
     public static func openInMemory() throws -> Store {
-        let pool = try DatabasePool(path: ":memory:")
-        return try Store(pool: pool)
+        let queue = try DatabaseQueue()
+        return try Store(writer: queue)
     }
 
     public func read<T>(_ block: (Database) throws -> T) throws -> T {
-        try dbPool.read(block)
+        try writer.read(block)
     }
 
     public func write<T>(_ block: (Database) throws -> T) throws -> T {
-        try dbPool.write(block)
+        try writer.write(block)
     }
 
     static let migrator: DatabaseMigrator = {
@@ -1119,6 +1160,8 @@ Each client uses `URLSession` with a custom `URLProtocol` for stub tests. The st
 
 ### Task 3.1: `URLProtocolStub` test helper
 
+`URLProtocolStub.handlers` is a process-global, and Swift Testing runs suites in parallel by default. Every test suite that touches `URLProtocolStub` MUST be declared `@Suite(.serialized)` so handler registration from one suite doesn't race with another's. The reset/register/use sequence is then race-free within each suite (tests inside a suite are also serialised when the suite is).
+
 **Files:**
 - Create: `TapedeckCore/Tests/TapedeckCoreTests/Support/URLProtocolStub.swift`
 
@@ -1241,14 +1284,14 @@ Run: expect compile failure.
 
 import Foundation
 
-public final class SourceClient: Sendable {
+public actor SourceClient {
     public static let defaultHost = URL(string: "https://api.plaud.ai")!
-    static let userAgent =
+    nonisolated static let userAgent =
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 " +
         "(KHTML, like Gecko) Version/18.6 Safari/605.1.15"
 
-    let session: URLSession
-    let token: String
+    nonisolated let session: URLSession
+    nonisolated let token: String
     public private(set) var host: URL
 
     public init(token: String, host: URL? = nil, session: URLSession = .shared) {
@@ -1257,8 +1300,11 @@ public final class SourceClient: Sendable {
         self.session = session
     }
 
+    public func currentHost() -> URL { host }
+
     /// Returns the regional API host implied by the JWT's region claim, or nil.
     /// Region claim name is whichever §0.5 captured; check both common forms.
+    /// Values may carry an `aws:` provider prefix (e.g. `aws:eu-central-1`); strip before lookup.
     public static func hostFromJWT(_ token: String) -> URL? {
         let parts = token.split(separator: ".")
         guard parts.count >= 2 else { return nil }
@@ -1269,17 +1315,18 @@ public final class SourceClient: Sendable {
         guard let data = Data(base64Encoded: b64),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
-        let region = (obj["region"] as? String) ?? (obj["aws:region"] as? String)
-        return region.flatMap(regionToHost)
+        let raw = (obj["region"] as? String) ?? (obj["aws:region"] as? String)
+        return raw.flatMap(regionToHost)
     }
 
     static func regionToHost(_ region: String) -> URL? {
+        let normalised = region.hasPrefix("aws:") ? String(region.dropFirst(4)) : region
         // Extend this table as new regions appear in JWTs.
         let map: [String: String] = [
             "eu-central-1": "https://api-euc1.plaud.ai",
             "us-east-1": "https://api.plaud.ai",
         ]
-        return map[region].flatMap(URL.init(string:))
+        return map[normalised].flatMap(URL.init(string:))
     }
 }
 ```
@@ -1299,7 +1346,7 @@ import Testing
 import Foundation
 @testable import TapedeckCore
 
-@Suite("SourceClient host discovery")
+@Suite("SourceClient host discovery", .serialized)
 struct SourceClientDiscoveryTests {
     @Test func switchesHostOn302Response() async throws {
         URLProtocolStub.reset()
@@ -1318,7 +1365,8 @@ struct SourceClientDiscoveryTests {
                                   host: URL(string: "https://api.plaud.ai")!,
                                   session: URLProtocolStub.ephemeralSession())
         try await client.discoverHost()
-        #expect(client.host.host == "api-euc1.plaud.ai")
+        let resolved = await client.currentHost()
+        #expect(resolved.host == "api-euc1.plaud.ai")
     }
 }
 ```
@@ -1326,10 +1374,10 @@ struct SourceClientDiscoveryTests {
 **Step 2: Implementation — append to SourceClient.swift**
 
 ```swift
-public extension SourceClient {
+extension SourceClient {
     /// Resolve the regional host by probing `/file/simple/web` and following the -302 JSON status.
     /// Idempotent — if the current host already returns recordings (status != -302), keeps it.
-    func discoverHost() async throws {
+    public func discoverHost() async throws {
         var probe = URLRequest(url: host.appending(path: "/file/simple/web"))
         probe.url = probe.url?.appending(queryItems: [
             .init(name: "skip", value: "0"),
@@ -1337,7 +1385,15 @@ public extension SourceClient {
             .init(name: "is_trash", value: "0"),
         ])
         addStandardHeaders(&probe)
-        let (data, _) = try await session.data(for: probe)
+        // Validation must run *inside* the retry closure so HTTPRetryableError triggers a retry.
+        let data: Data
+        do {
+            data = try await RetryPolicy.run { [session] in
+                let (body, response) = try await session.data(for: probe)
+                try HTTPValidator.validate(response, body: body)
+                return body
+            }
+        } catch is HTTPUnauthorised { throw SourceClientError.unauthorised }
         if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let status = obj["status"] as? Int, status == -302,
            let domains = (obj["data"] as? [String: Any])?["domains"] as? [String: Any],
@@ -1346,7 +1402,7 @@ public extension SourceClient {
         }
     }
 
-    internal func addStandardHeaders(_ req: inout URLRequest) {
+    nonisolated internal func addStandardHeaders(_ req: inout URLRequest) {
         req.setValue("bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("web", forHTTPHeaderField: "app-platform")
         req.setValue("web", forHTTPHeaderField: "edit-from")
@@ -1372,7 +1428,7 @@ Run: tests pass. Commit: `feat(core): SourceClient host discovery via -302`.
 import Testing
 @testable import TapedeckCore
 
-@Suite("SourceClient list")
+@Suite("SourceClient list", .serialized)
 struct SourceClientListTests {
     @Test func parsesListResponseIntoRecordings() async throws {
         URLProtocolStub.reset()
@@ -1392,8 +1448,8 @@ struct SourceClientListTests {
 **Step 2: Implementation**
 
 ```swift
-public extension SourceClient {
-    func listPage(skip: Int, limit: Int = 100) async throws -> [Recording] {
+extension SourceClient {
+    public func listPage(skip: Int, limit: Int = 100) async throws -> [Recording] {
         var url = host.appending(path: "/file/simple/web")
         url = url.appending(queryItems: [
             .init(name: "skip", value: "\(skip)"),
@@ -1405,7 +1461,8 @@ public extension SourceClient {
         var req = URLRequest(url: url)
         addStandardHeaders(&req)
         let (data, response) = try await session.data(for: req)
-        try Self.throwIfUnauthorised(response)
+        do { try HTTPValidator.validate(response, body: data) }
+        catch is HTTPUnauthorised { throw SourceClientError.unauthorised }
         struct Envelope: Decodable { let data_file_list: [Item] }
         struct Item: Decodable {
             let id: String; let filename: String; let start_time: Int64
@@ -1420,7 +1477,7 @@ public extension SourceClient {
         }
     }
 
-    func listAll() async throws -> [Recording] {
+    public func listAll() async throws -> [Recording] {
         var all: [Recording] = []
         var skip = 0
         let pageSize = 100
@@ -1432,12 +1489,31 @@ public extension SourceClient {
         }
         return all
     }
+}
 
-    static func throwIfUnauthorised(_ response: URLResponse) throws {
+/// Maps HTTP responses to typed errors. Each external client decides what 401
+/// means for *its* identity — Plaud 401 means JWT expired; Deepgram/Gemini 401
+/// mean wrong API key — so HTTPValidator emits a generic HTTPUnauthorised and
+/// the caller wraps it appropriately.
+public enum HTTPValidator {
+    public static func validate(_ response: URLResponse, body: Data) throws {
         guard let http = response as? HTTPURLResponse else { return }
-        if http.statusCode == 401 { throw SourceClientError.unauthorised }
+        switch http.statusCode {
+        case 200..<300: return
+        case 401: throw HTTPUnauthorised(body: String(data: body, encoding: .utf8) ?? "")
+        case 408, 429, 500..<600:
+            throw HTTPRetryableError(status: http.statusCode,
+                                     body: String(data: body, encoding: .utf8) ?? "")
+        default:
+            throw HTTPNonRetryableError(status: http.statusCode,
+                                        body: String(data: body, encoding: .utf8) ?? "")
+        }
     }
 }
+
+public struct HTTPUnauthorised: Error, Equatable { public let body: String }
+public struct HTTPRetryableError: Error, Equatable { public let status: Int; public let body: String }
+public struct HTTPNonRetryableError: Error, Equatable { public let status: Int; public let body: String }
 
 public enum SourceClientError: Error, Equatable {
     case unauthorised
@@ -1452,12 +1528,13 @@ Run, commit.
 Same pattern: failing test using `temp_url.json` and `raw_metadata.json` fixtures; implement; commit.
 
 ```swift
-public extension SourceClient {
-    func tempURL(for sourceId: String) async throws -> URL {
+extension SourceClient {
+    public func tempURL(for sourceId: String) async throws -> URL {
         var req = URLRequest(url: host.appending(path: "/file/temp-url/\(sourceId)"))
         addStandardHeaders(&req)
         let (data, response) = try await session.data(for: req)
-        try Self.throwIfUnauthorised(response)
+        do { try HTTPValidator.validate(response, body: data) }
+        catch is HTTPUnauthorised { throw SourceClientError.unauthorised }
         struct Envelope: Decodable { let temp_url: String }
         let env = try JSONDecoder().decode(Envelope.self, from: data)
         guard let url = URL(string: env.temp_url) else {
@@ -1466,13 +1543,14 @@ public extension SourceClient {
         return url
     }
 
-    func rawMetadata(for sourceIds: [String]) async throws -> Data {
+    public func rawMetadata(for sourceIds: [String]) async throws -> Data {
         var req = URLRequest(url: host.appending(path: "/file/list"))
         req.httpMethod = "POST"
         addStandardHeaders(&req)
         req.httpBody = try JSONSerialization.data(withJSONObject: sourceIds)
         let (data, response) = try await session.data(for: req)
-        try Self.throwIfUnauthorised(response)
+        do { try HTTPValidator.validate(response, body: data) }
+        catch is HTTPUnauthorised { throw SourceClientError.unauthorised }
         return data
     }
 }
@@ -1491,15 +1569,31 @@ The S3 URL is signed and large. Stream with `URLSession.bytes(for:)` into a `.pa
 **Test** — register a stub that serves arbitrary bytes for any URL whose host ends in `amazonaws.com`; assert the file lands at the target path and `.part` is gone.
 
 ```swift
-public extension SourceClient {
+extension SourceClient {
     /// Streams `url` to `target.part`, then renames atomically. Returns the extension parsed from url.path.
-    func download(from url: URL, target: URL, fileManager: FileManager = .default) async throws -> String {
+    public func download(from url: URL, target: URL, fileManager: FileManager = .default) async throws -> String {
+        // Idempotent recovery — if a previous run wrote `target` successfully but failed
+        // mid-metadata, we want this call to be a no-op fetch and just return the extension.
+        if fileManager.fileExists(atPath: target.path) {
+            let ext = url.pathExtension.lowercased()
+            return ext.isEmpty ? "audio" : ext
+        }
         let partURL = target.appendingPathExtension("part")
         try? fileManager.removeItem(at: partURL)
         try fileManager.createDirectory(at: target.deletingLastPathComponent(),
                                         withIntermediateDirectories: true)
         let (asyncBytes, response) = try await session.bytes(for: URLRequest(url: url))
-        try Self.throwIfUnauthorised(response)
+        // Body bytes haven't streamed yet; only the status code is available.
+        if let http = response as? HTTPURLResponse {
+            switch http.statusCode {
+            case 200..<300: break
+            case 401: throw SourceClientError.unauthorised
+            case 408, 429, 500..<600:
+                throw HTTPRetryableError(status: http.statusCode, body: "")
+            default:
+                throw HTTPNonRetryableError(status: http.statusCode, body: "")
+            }
+        }
         fileManager.createFile(atPath: partURL.path, contents: nil)
         let handle = try FileHandle(forWritingTo: partURL)
         defer { try? handle.close() }
@@ -1520,29 +1614,39 @@ Commit: `feat(core): SourceClient streaming download`.
 
 Wrap the call sites in a retry helper. Keep it simple: 1s, 2s, 4s, then throw. One test that returns 503 twice then 200 and asserts the eventual success.
 
+**Files:**
+- Create: `TapedeckCore/Sources/TapedeckCore/RetryPolicy.swift`
+- Create: `TapedeckCore/Tests/TapedeckCoreTests/RetryPolicyTests.swift`
+
 ```swift
-extension SourceClient {
-    static func withRetry<T>(_ block: () async throws -> T) async throws -> T {
+// ABOUTME: Exponential-backoff retry used by every external HTTP client.
+// ABOUTME: Retries on HTTPRetryableError and transient URLError; never on 401/4xx.
+
+import Foundation
+
+public enum RetryPolicy {
+    /// 4 attempts total with sleeps 1s, 2s, 4s between failures.
+    public static func run<T>(maxAttempts: Int = 4,
+                              sleep: @escaping (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) },
+                              _ block: () async throws -> T) async throws -> T {
         var attempt = 0
         while true {
             do { return try await block() }
-            catch URLError.cannotConnectToHost, URLError.timedOut where attempt < 3 {
-                try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt))) * 1_000_000_000)
-                attempt += 1
-            } catch let e as SourceClientError where e == .unauthorised {
-                throw e
-            } catch {
-                if attempt < 3 {
-                    try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt))) * 1_000_000_000)
-                    attempt += 1
-                } else { throw error }
-            }
+            catch is HTTPRetryableError where attempt < maxAttempts - 1 { /* retry */ }
+            catch let url as URLError where Self.isRetryableURLError(url) && attempt < maxAttempts - 1 { /* retry */ }
+            // SourceClientError.unauthorised + HTTPNonRetryableError propagate immediately.
+            try await sleep(UInt64(pow(2.0, Double(attempt))) * 1_000_000_000)
+            attempt += 1
         }
+    }
+
+    static func isRetryableURLError(_ e: URLError) -> Bool {
+        [.timedOut, .cannotConnectToHost, .networkConnectionLost, .dnsLookupFailed].contains(e.code)
     }
 }
 ```
 
-(Refine the catch arms after running the test — the goal is retry on 5xx/429 and timeouts, not on 401.)
+Test: an injected counter that throws `HTTPRetryableError(status: 503, body: "")` twice then returns 200 on the third call — assert exactly three invocations of the block and exactly two sleeps. A second test asserts `HTTPNonRetryableError(status: 404, ...)` is rethrown immediately with one invocation and zero sleeps.
 
 ### Task 3.9: `DeepgramClient`
 
@@ -1550,14 +1654,32 @@ extension SourceClient {
 - Create: `TapedeckCore/Sources/TapedeckCore/DeepgramClient.swift`
 - Create: `TapedeckCore/Tests/TapedeckCoreTests/DeepgramClientTests.swift`
 
-**Test** — uses `Fixtures/deepgram/short_recording.json` to verify the parser returns `(transcript: String, raw: Data, segments: [(speaker:Int, start:Double, text:String)])`. Implementation streams the audio bytes with `Content-Type: audio/*` to `https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&diarize=true&punctuate=true` with `Authorization: Token <KEY>`.
+**Tests** — `Fixtures/deepgram/short_recording.json` exercises both the flat transcript and the speaker-labelled utterances. Two test cases:
+
+1. `transcript` is non-empty and matches what the fixture's `channels[0].alternatives[0].transcript` contains verbatim.
+2. `utterances` contains ≥1 item with `speaker`, `start`, `end`, `transcript` fields; the formatted transcript file produced by `Pipeline` interleaves speaker labels in the form `[speaker N] <text>\n`.
+
+Implementation — POSTs the audio bytes to `https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&diarize=true&punctuate=true&utterances=true` with `Authorization: Token <KEY>`:
 
 ```swift
+// ABOUTME: Deepgram REST client for nova-3 transcription with diarization + utterances.
+// ABOUTME: Returns both the flat transcript and per-speaker utterance segments.
+
+import Foundation
+
 public struct DeepgramClient: Sendable {
+    public struct Utterance: Sendable, Equatable {
+        public let speaker: Int
+        public let start: Double
+        public let end: Double
+        public let transcript: String
+    }
     public struct Result: Sendable {
         public let transcript: String
+        public let utterances: [Utterance]
         public let raw: Data
     }
+    public enum DeepgramError: Error, Equatable { case invalidApiKey }
     let session: URLSession
     let apiKey: String
 
@@ -1567,31 +1689,46 @@ public struct DeepgramClient: Sendable {
 
     public func transcribe(audioAt url: URL, contentType: String) async throws -> Result {
         var req = URLRequest(url: URL(string:
-            "https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&diarize=true&punctuate=true")!)
+            "https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&diarize=true&punctuate=true&utterances=true")!)
         req.httpMethod = "POST"
         req.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue(contentType, forHTTPHeaderField: "Content-Type")
         req.httpBodyStream = InputStream(url: url)
         let (data, response) = try await session.data(for: req)
-        try SourceClient.throwIfUnauthorised(response)
+        do { try HTTPValidator.validate(response, body: data) }
+        catch is HTTPUnauthorised { throw DeepgramError.invalidApiKey }
         struct Envelope: Decodable {
             struct Results: Decodable {
                 struct Channel: Decodable {
                     struct Alt: Decodable { let transcript: String }
                     let alternatives: [Alt]
                 }
+                struct Utterance: Decodable {
+                    let speaker: Int; let start: Double; let end: Double; let transcript: String
+                }
                 let channels: [Channel]
+                let utterances: [Utterance]?
             }
             let results: Results
         }
         let env = try JSONDecoder().decode(Envelope.self, from: data)
         let transcript = env.results.channels.first?.alternatives.first?.transcript ?? ""
-        return Result(transcript: transcript, raw: data)
+        let utterances = (env.results.utterances ?? []).map {
+            Utterance(speaker: $0.speaker, start: $0.start, end: $0.end, transcript: $0.transcript)
+        }
+        return Result(transcript: transcript, utterances: utterances, raw: data)
     }
+}
+
+/// Renders the speaker-labelled transcript that ends up in `<stem>.transcript.txt`.
+/// One paragraph per utterance: `[speaker N] <text>\n`. Used by Pipeline.transcribeNew().
+public func renderTranscript(_ utterances: [DeepgramClient.Utterance], fallback: String) -> String {
+    guard !utterances.isEmpty else { return fallback }
+    return utterances.map { "[speaker \($0.speaker)] \($0.transcript)" }.joined(separator: "\n\n")
 }
 ```
 
-Refine field names against the actual `short_recording.json` shape captured in §0.6.
+Refine field names against the actual `short_recording.json` shape captured in §0.6. The plan's diarization assumption follows Deepgram's `utterances=true` parameter — see <https://developers.deepgram.com/docs/diarization>.
 
 ### Task 3.10: `GeminiClient`
 
@@ -1609,7 +1746,7 @@ public struct GeminiClient: Sendable {
     public struct Decision: Sendable {
         public let projectId: String?; public let confidence: Double; public let reasoning: String
     }
-    public enum GeminiError: Error { case malformedResponse(String) }
+    public enum GeminiError: Error { case malformedResponse(String), invalidApiKey }
     let session: URLSession; let apiKey: String
 
     public init(apiKey: String, session: URLSession = .shared) {
@@ -1652,7 +1789,9 @@ public struct GeminiClient: Sendable {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, _) = try await session.data(for: req)
+        let (data, response) = try await session.data(for: req)
+        do { try HTTPValidator.validate(response, body: data) }
+        catch is HTTPUnauthorised { throw GeminiError.invalidApiKey }
 
         struct Envelope: Decodable {
             struct Candidate: Decodable {
@@ -1767,61 +1906,371 @@ public final class SyncLock {
 
 Test: spawn a `Process` of `/bin/sleep` after locking; assert `tryAcquire()` is false in the parent process holding the lock and true once released. (Or simpler: open the lock twice in the same test process with separate `SyncLock` instances; second `tryAcquire` is false.)
 
-### Task 4.3: `Pipeline.swift` — orchestrate one cycle
+### Task 4.2a: Logging protocol
 
-This is the largest file; build it incrementally. Each pipeline stage gets its own test (using the existing client stubs). The shape:
+`Pipeline` needs a way to emit structured events without depending on file I/O (so tests don't litter the filesystem). The concrete `SyncLogger` (Task 6.2) implements it; tests pass a `CapturedLog` that just appends to an in-memory array.
+
+**Files:**
+- Create: `TapedeckCore/Sources/TapedeckCore/SyncLog.swift`
+- Create: `TapedeckCore/Tests/TapedeckCoreTests/Support/CapturedLog.swift`
 
 ```swift
-// ABOUTME: One sync cycle. Idempotent. Sequential stages, parallel within a stage (max 3).
-// ABOUTME: Logs structured JSON events to logURL; persists everything via Store.
+// SyncLog.swift
+public protocol SyncLog: Sendable {
+    func info(_ stage: String, source: String?)
+    func error(_ stage: String, source: String?, message: String)
+}
+
+public struct DiscardingLog: SyncLog {
+    public init() {}
+    public func info(_ stage: String, source: String?) {}
+    public func error(_ stage: String, source: String?, message: String) {}
+}
+```
+
+```swift
+// CapturedLog.swift — test helper
+final class CapturedLog: SyncLog, @unchecked Sendable {
+    struct Entry: Equatable { let level: String; let stage: String; let source: String?; let message: String? }
+    private let lock = NSLock()
+    private var entries: [Entry] = []
+    var all: [Entry] { lock.lock(); defer { lock.unlock() }; return entries }
+    func info(_ stage: String, source: String?) {
+        lock.lock(); entries.append(.init(level: "info", stage: stage, source: source, message: nil)); lock.unlock()
+    }
+    func error(_ stage: String, source: String?, message: String) {
+        lock.lock(); entries.append(.init(level: "error", stage: stage, source: source, message: message)); lock.unlock()
+    }
+}
+```
+
+Commit: `feat(core): SyncLog protocol + DiscardingLog`.
+
+### Task 4.3: `Pipeline.swift` — actor + cycle entry
+
+**Files:**
+- Create: `TapedeckCore/Sources/TapedeckCore/Pipeline.swift`
+- Create: `TapedeckCore/Tests/TapedeckCoreTests/PipelineCycleTests.swift`
+
+**Step 1: Failing test** — running `runCycle()` against a token-expired DB throws `PipelineError.tokenExpired` and never invokes the source client.
+
+**Step 2: Implementation**
+
+```swift
+// ABOUTME: One sync cycle. Idempotent. Sequential stages; bounded parallelism per stage.
+// ABOUTME: Owns no state beyond Deps; safe to construct fresh per helper invocation.
+
+import Foundation
 
 public actor Pipeline {
-    public struct Deps {
+    public struct Deps: Sendable {
         public let store: Store
         public let layout: Layout
         public let source: SourceClient
         public let deepgram: DeepgramClient
         public let gemini: GeminiClient
-        public let logger: SyncLogger
-        public let now: () -> Int64
+        public let logger: any SyncLog
+        public let now: @Sendable () -> Int64
     }
+    public enum PipelineError: Error, Equatable { case tokenExpired, tokenMissing }
 
     let deps: Deps
-    public init(deps: Deps) { self.deps = deps }
+    let recordings: RecordingRepository
+    let projects: ProjectRepository
+    let maxConcurrency = 3
+    let maxFailuresPerStage = 3
 
-    public func runCycle() async throws {
-        try await ensureToken()
-        try await deps.source.discoverHost()
-        try await listRemote()
-        try await downloadNew()
-        try await transcribeNew()
-        try await classifyNew()
-        try await relinkChanged()
-        try await touchLastSync()
+    public init(deps: Deps) {
+        self.deps = deps
+        self.recordings = RecordingRepository(store: deps.store)
+        self.projects = ProjectRepository(store: deps.store)
     }
 
-    func ensureToken() async throws { /* read app_state.token_status; throw if 'expired' */ }
-    func listRemote() async throws { /* page through, upsert via RecordingRepository */ }
-    func downloadNew() async throws { /* up to 3 in parallel via TaskGroup */ }
-    func transcribeNew() async throws { /* ditto */ }
-    func classifyNew() async throws { /* fetch active projects, build hints, call Gemini */ }
-    func relinkChanged() async throws { /* remove old links if linkedProjectId != projectId */ }
-    func touchLastSync() async throws { /* app_state.last_sync_at = now */ }
+    public func runCycle() async throws {
+        try ensureToken()
+        try await deps.source.discoverHost()
+        try await listRemote()
+        await downloadNew()
+        await transcribeNew()
+        await classifyNew()
+        try relinkChanged()
+        try touchLastSync()
+    }
+
+    func ensureToken() throws {
+        let status: String? = try deps.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key = 'token_status'")
+        }
+        if status == "expired" { throw PipelineError.tokenExpired }
+    }
+
+    func touchLastSync() throws {
+        let value = String(deps.now())
+        try deps.store.write { db in
+            try db.execute(sql: """
+                INSERT INTO app_state(key,value) VALUES('last_sync_at', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """, arguments: [value])
+        }
+    }
 }
 ```
 
-Each stage is one task in the plan; each task has a TDD test that wires Store + stubs and asserts the expected side-effects on disk and in DB. See design §4 for the exact stage rules — implement them verbatim.
+Commit: `feat(core): Pipeline actor with ensureToken + touchLastSync`.
 
-**Key invariants to test:**
-- `downloadNew` writes to `.part` first, renames; if the move fails, no orphaned `.audio_downloaded_at`.
-- `transcribeNew` on failure: writes `recording_errors` row with stage='transcribe' and `attempt = previous + 1`; on success: clears that row.
-- `classifyNew` always sets `classified_at`, even when `projectId` is null (so we don't re-call the model).
-- `classifyNew` with confidence ≥ 0.7 *and* non-null projectId sets `project_link_state = 'pending_relink'`; otherwise leaves it `'none'`.
-- `relinkChanged` removes links from `linked_project_id` directory and writes to `project_id` directory; sets `linked_project_id = project_id` and `project_link_state = 'linked'`.
+### Task 4.4: `Pipeline.listRemote`
 
-Commit per stage.
+**Test** — stub `SourceClient.listPage` (override `URLProtocolStub`) to return two recordings; assert both are upserted with `last_seen_at` set to `deps.now()`.
 
-### Task 4.4: Full-cycle integration test
+```swift
+extension Pipeline {
+    func listRemote() async throws {
+        let remote = try await RetryPolicy.run { try await deps.source.listAll() }
+        let now = deps.now()
+        for rec in remote {
+            var r = rec; r.lastSeenAt = now
+            try recordings.upsertFromRemote(r)
+        }
+        deps.logger.info("list_remote", source: nil)
+    }
+}
+```
+
+### Task 4.5: `Pipeline.downloadNew`
+
+**Test** — one row needing download; stubs return a fake S3 URL + 4 bytes; assert the audio file lands in `Layout.audioDir`, `audio_downloaded_at` is set, `audio_extension` is set, and any prior `recording_errors` row for stage='download' is cleared.
+
+```swift
+extension Pipeline {
+    /// Runs `body` over `items` with at most `maxConcurrency` tasks in flight.
+    /// Used by every stage so the design's "max 3 in parallel" rule is single-sourced.
+    func runBounded<T: Sendable>(_ items: [T],
+                                  _ body: @escaping @Sendable (T) async -> Void) async {
+        await withTaskGroup(of: Void.self) { group in
+            var inflight = 0
+            for item in items {
+                if inflight >= maxConcurrency {
+                    await group.next(); inflight -= 1
+                }
+                group.addTask { await body(item) }
+                inflight += 1
+            }
+        }
+    }
+
+    func downloadNew() async {
+        let pending = ((try? recordings.recordingsNeedingDownload()) ?? [])
+            .filter { !shouldSkipAfterFailures(sourceId: $0.sourceId, stage: .download) }
+        await runBounded(pending) { rec in await self.downloadOne(rec) }
+    }
+
+    private func downloadOne(_ rec: Recording) async {
+        do {
+            let tempURL = try await RetryPolicy.run {
+                try await deps.source.tempURL(for: rec.sourceId)
+            }
+            let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
+            let dir = deps.layout.audioDir(date: date)
+            let stem = deps.layout.stem(sourceId: rec.sourceId, title: rec.filename)
+            let target = dir.appending(path: stem)
+                            .appendingPathExtension(tempURL.pathExtension.isEmpty ? "audio" : tempURL.pathExtension)
+            let ext = try await RetryPolicy.run {
+                try await deps.source.download(from: tempURL, target: target)
+            }
+            let metadata = try await RetryPolicy.run {
+                try await deps.source.rawMetadata(for: [rec.sourceId])
+            }
+            try metadata.write(to: dir.appending(path: "\(stem).source.json"))
+            try recordings.setDownloaded(sourceId: rec.sourceId, ext: ext, at: deps.now())
+            try recordings.clearError(sourceId: rec.sourceId, stage: .download)
+            deps.logger.info("download_ok", source: rec.sourceId)
+        } catch {
+            try? recordings.recordError(sourceId: rec.sourceId, stage: .download,
+                                        at: deps.now(), message: "\(error)")
+            deps.logger.error("download_failed", source: rec.sourceId, message: "\(error)")
+        }
+    }
+
+    private func shouldSkipAfterFailures(sourceId: String, stage: SyncStage) -> Bool {
+        ((try? recordings.error(sourceId: sourceId, stage: stage))?.attempt ?? 0) >= maxFailuresPerStage
+    }
+}
+```
+
+### Task 4.6: `Pipeline.transcribeNew`
+
+**Test** — one downloaded row + Deepgram stub returning the `short_recording.json` fixture; assert `<stem>.deepgram.json` is written next to the audio, `<stem>.transcript.txt` contains the speaker-labelled output from `renderTranscript`, `transcribed_at` is set, and the `transcribe` error row (if any) is cleared.
+
+```swift
+extension Pipeline {
+    func transcribeNew() async {
+        let pending = ((try? recordings.recordingsNeedingTranscription()) ?? [])
+            .filter { !shouldSkipAfterFailures(sourceId: $0.sourceId, stage: .transcribe) }
+        await runBounded(pending) { rec in await self.transcribeOne(rec) }
+    }
+
+    private func transcribeOne(_ rec: Recording) async {
+        do {
+            let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
+            let dir = deps.layout.audioDir(date: date)
+            let stem = deps.layout.stem(sourceId: rec.sourceId, title: rec.filename)
+            let audio = dir.appending(path: "\(stem).\(rec.audioExtension ?? "audio")")
+            let result = try await RetryPolicy.run {
+                try await deps.deepgram.transcribe(audioAt: audio, contentType: "audio/*")
+            }
+            try result.raw.write(to: dir.appending(path: "\(stem).deepgram.json"))
+            let txt = renderTranscript(result.utterances, fallback: result.transcript)
+            try txt.write(to: dir.appending(path: "\(stem).transcript.txt"),
+                          atomically: true, encoding: .utf8)
+            try recordings.setTranscribed(sourceId: rec.sourceId, at: deps.now())
+            try recordings.clearError(sourceId: rec.sourceId, stage: .transcribe)
+            deps.logger.info("transcribe_ok", source: rec.sourceId)
+        } catch {
+            try? recordings.recordError(sourceId: rec.sourceId, stage: .transcribe,
+                                        at: deps.now(), message: "\(error)")
+            deps.logger.error("transcribe_failed", source: rec.sourceId, message: "\(error)")
+        }
+    }
+}
+```
+
+### Task 4.7: `Pipeline.classifyNew`
+
+**Tests** — four cases driven by Gemini fixtures:
+1. high_confidence (confidence 0.92): assigns projectId, sets `pending_relink`.
+2. low_confidence (confidence 0.41): leaves projectId nil, still sets `classified_at`.
+3. null_project: same as low_confidence.
+4. Threshold sensitivity: with `app_state.classifier_threshold = '0.95'` written before the cycle, the high_confidence (0.92) decision now leaves projectId nil — proves the threshold is read from `app_state` rather than hardcoded.
+
+One more test with `recording.transcribedAt = nil` asserts the row is skipped.
+
+```swift
+extension Pipeline {
+    func classifyNew() async {
+        let pending = ((try? recordings.recordingsNeedingClassification()) ?? [])
+            .filter { !shouldSkipAfterFailures(sourceId: $0.sourceId, stage: .classify) }
+        guard !pending.isEmpty else { return }
+        let activeProjects = (try? projects.listActive()) ?? []
+        let hints = activeProjects.map {
+            GeminiClient.ProjectHint(id: $0.id, name: $0.displayName, description: $0.description)
+        }
+        await runBounded(pending) { rec in await self.classifyOne(rec, hints: hints) }
+    }
+
+    /// Reads `app_state.classifier_threshold`, defaulting to 0.7 if absent or malformed.
+    func classifierThreshold() throws -> Double {
+        let raw: String? = try deps.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key = 'classifier_threshold'")
+        }
+        return raw.flatMap(Double.init) ?? 0.7
+    }
+
+    private func classifyOne(_ rec: Recording, hints: [GeminiClient.ProjectHint]) async {
+        let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
+        let stem = deps.layout.stem(sourceId: rec.sourceId, title: rec.filename)
+        let txtURL = deps.layout.audioDir(date: date).appending(path: "\(stem).transcript.txt")
+        do {
+            let transcript = (try? String(contentsOf: txtURL, encoding: .utf8)) ?? ""
+            let threshold = (try? classifierThreshold()) ?? 0.7
+            let decision = try await RetryPolicy.run {
+                try await deps.gemini.classify(transcript: transcript, projects: hints)
+            }
+            let assign = decision.confidence >= threshold && decision.projectId != nil
+            let linkState: Recording.LinkState = assign ? .pendingRelink : .none
+            try recordings.setClassification(
+                sourceId: rec.sourceId,
+                projectId: assign ? decision.projectId : nil,
+                confidence: decision.confidence,
+                reasoning: decision.reasoning,
+                by: "gemini-3-flash-preview",
+                at: deps.now(),
+                linkState: linkState)
+            try recordings.clearError(sourceId: rec.sourceId, stage: .classify)
+            deps.logger.info("classify_ok", source: rec.sourceId)
+        } catch {
+            try? recordings.recordError(sourceId: rec.sourceId, stage: .classify,
+                                        at: deps.now(), message: "\(error)")
+            deps.logger.error("classify_failed", source: rec.sourceId, message: "\(error)")
+        }
+    }
+}
+```
+
+### Task 4.8: `Pipeline.relinkChanged`
+
+**Test** — recording with `project_link_state='pending_relink'` and an existing `linked_project_id`; assert the old project's symlink/copies are removed, the new project's contents are written, `linked_project_id` is updated, and `project_link_state` becomes `'linked'`. A second test covers `linked_project_id == nil` (first link) writing to the new project only.
+
+```swift
+extension Pipeline {
+    func relinkChanged() throws {
+        let pending = (try? recordings.recordingsNeedingRelink()) ?? []
+        for rec in pending {
+            do {
+                if let oldSlug = rec.linkedProjectId {
+                    try removeProjectLinks(rec: rec, slug: oldSlug)
+                }
+                if let newSlug = rec.projectId {
+                    try writeProjectLinks(rec: rec, slug: newSlug)
+                }
+                try recordings.markLinked(sourceId: rec.sourceId, linkedProjectId: rec.projectId)
+                try recordings.clearError(sourceId: rec.sourceId, stage: .link)
+            } catch {
+                try? recordings.recordError(sourceId: rec.sourceId, stage: .link,
+                                            at: deps.now(), message: "\(error)")
+                deps.logger.error("relink_failed", source: rec.sourceId, message: "\(error)")
+            }
+        }
+    }
+
+    private func writeProjectLinks(rec: Recording, slug: String) throws {
+        let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
+        let audioDir = deps.layout.audioDir(date: date)
+        let stem = deps.layout.stem(sourceId: rec.sourceId, title: rec.filename)
+        let projectDir = deps.layout.projectDir(slug: slug)
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+
+        // Idempotent: any prior partial result is removed before re-copying.
+        func replaceCopy(from src: URL, to dst: URL) throws {
+            try? FileManager.default.removeItem(at: dst)
+            try FileManager.default.copyItem(at: src, to: dst)
+        }
+        try replaceCopy(from: audioDir.appending(path: "\(stem).transcript.txt"),
+                        to: projectDir.appending(path: "\(stem).transcript.txt"))
+        try replaceCopy(from: audioDir.appending(path: "\(stem).deepgram.json"),
+                        to: projectDir.appending(path: "\(stem).deepgram.json"))
+
+        let ext = rec.audioExtension ?? "audio"
+        let audio = audioDir.appending(path: "\(stem).\(ext)")
+        let link = projectDir.appending(path: "\(stem).\(ext)")
+        try? FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: audio)
+    }
+
+    private func removeProjectLinks(rec: Recording, slug: String) throws {
+        let projectDir = deps.layout.projectDir(slug: slug)
+        let stem = deps.layout.stem(sourceId: rec.sourceId, title: rec.filename)
+        for ext in ["transcript.txt", "deepgram.json",
+                    rec.audioExtension ?? "audio"] {
+            try? FileManager.default.removeItem(at: projectDir.appending(path: "\(stem).\(ext)"))
+        }
+    }
+}
+```
+
+### Task 4.8a: Bounded-concurrency + relink-retry tests
+
+**Files:**
+- Create: `TapedeckCore/Tests/TapedeckCoreTests/PipelineConcurrencyTests.swift`
+
+Three tests:
+
+1. **`bounded_concurrency_caps_at_three`** — seed 10 download-pending rows; instrument the stub so each handler counts current in-flight requests via an atomic counter; assert the observed peak ≤ 3.
+
+2. **`transcribe_stage_uses_same_bound`** — same shape, applied to `transcribeNew`. Asserts that `runBounded` is the single mechanism.
+
+3. **`relink_recovers_from_partial_failure`** — start with a recording whose project copies were partially written previously (transcript.txt already exists in the project dir from a prior failed run); run `relinkChanged`; assert no error and the project dir ends up consistent (both files copied, symlink present).
+
+### Task 4.9: Full-cycle integration test
 
 **Files:**
 - Create: `TapedeckCore/Tests/TapedeckCoreTests/PipelineEndToEndTests.swift`
@@ -1834,6 +2283,8 @@ Asserts: a fresh DB + one stubbed listing of 2 recordings + stubbed temp-urls + 
 
 ### Task 5.1: `KeychainStore.swift` with `kSecUseDataProtectionKeychain`
 
+The runtime access group must be the *resolved* team-prefixed string (`C8Q84FVJHL.com.benphillips.tapedeck`), because `$(AppIdentifierPrefix)` substitution only happens in entitlements files at build time — never in Swift source. Production code uses `KeychainStore.shared` (resolved string baked in); test code uses `KeychainStore(accessGroup: nil)` to fall back to the default file-scoped keychain so unsigned `swift test` processes work.
+
 ```swift
 // ABOUTME: Keychain access for shared items between Tapedeck UI and helper.
 // ABOUTME: Uses kSecUseDataProtectionKeychain on macOS so kSecAttrAccessGroup applies.
@@ -1842,51 +2293,49 @@ import Foundation
 import Security
 
 public struct KeychainStore: Sendable {
-    public let accessGroup: String   // "$(AppIdentifierPrefix)com.benphillips.tapedeck"
+    /// Resolved access group (team-prefixed) — must match both binaries' entitlements verbatim.
+    public static let sharedAccessGroup = "C8Q84FVJHL.com.benphillips.tapedeck"
 
-    public init(accessGroup: String) { self.accessGroup = accessGroup }
+    /// Production wiring used by both binaries.
+    public static let shared = KeychainStore(accessGroup: sharedAccessGroup)
 
-    public func set(service: String, account: String, value: String) throws {
-        let data = Data(value.utf8)
-        let base: [String: Any] = [
+    /// nil disables access-group scoping — only safe in unsigned test processes.
+    public let accessGroup: String?
+
+    public init(accessGroup: String?) { self.accessGroup = accessGroup }
+
+    private func baseQuery(service: String, account: String) -> [String: Any] {
+        var q: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecAttrAccessGroup as String: accessGroup,
             kSecUseDataProtectionKeychain as String: true,
         ]
+        if let ag = accessGroup { q[kSecAttrAccessGroup as String] = ag }
+        return q
+    }
+
+    public func set(service: String, account: String, value: String) throws {
+        let base = baseQuery(service: service, account: account)
         SecItemDelete(base as CFDictionary)
-        var add = base; add[kSecValueData as String] = data
+        var add = base; add[kSecValueData as String] = Data(value.utf8)
         let status = SecItemAdd(add as CFDictionary, nil)
         guard status == errSecSuccess else { throw KeychainError.osStatus(status) }
     }
 
     public func get(service: String, account: String) throws -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecAttrAccessGroup as String: accessGroup,
-            kSecUseDataProtectionKeychain as String: true,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
+        var q = baseQuery(service: service, account: account)
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        let status = SecItemCopyMatching(q as CFDictionary, &item)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = item as? Data else { throw KeychainError.osStatus(status) }
         return String(data: data, encoding: .utf8)
     }
 
     public func delete(service: String, account: String) throws {
-        let q: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecAttrAccessGroup as String: accessGroup,
-            kSecUseDataProtectionKeychain as String: true,
-        ]
-        let status = SecItemDelete(q as CFDictionary)
+        let status = SecItemDelete(baseQuery(service: service, account: account) as CFDictionary)
         if status != errSecSuccess && status != errSecItemNotFound { throw KeychainError.osStatus(status) }
     }
 
@@ -1894,7 +2343,7 @@ public struct KeychainStore: Sendable {
 }
 ```
 
-Tests live in `KeychainStoreTests.swift` and only exercise pure logic against the *default* (file-scoped, no-access-group) keychain — see design §3 note: signed-only verification lives in `scripts/verify-keychain-sharing.sh`.
+`KeychainStoreTests.swift` constructs `KeychainStore(accessGroup: nil)` so the file-scoped keychain handles the round-trip; cross-process verification lives in `scripts/verify-keychain-sharing.sh` against the signed `.app`.
 
 ### Task 5.2: `AppStateNotifier.swift` — `DistributedNotificationCenter`
 
@@ -1928,6 +2377,58 @@ No unit test — `DistributedNotificationCenter` cross-process behaviour is hard
 
 ## Phase 6 — TapedeckSyncHelper binary
 
+### Task 6.0: `SyncLogger.swift` — JSON-lines logger (synchronous writes)
+
+`SyncLogger` is the concrete `SyncLog` (introduced in Task 4.2a) that backs the helper binary. Writes are synchronous so the process can `exit()` immediately after logging without losing the last line. Path: `~/Library/Logs/Tapedeck/sync.log`.
+
+```swift
+// ABOUTME: File-backed SyncLog. Synchronous fsync after every line — the helper
+// ABOUTME: exits seconds after the last log, so async queueing would lose events.
+
+import Foundation
+
+public final class SyncLogger: SyncLog, @unchecked Sendable {
+    let url: URL
+    let lock = NSLock()
+
+    public init(url: URL) {
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                  withIntermediateDirectories: true)
+        self.url = url
+    }
+    public func info(_ stage: String, source: String?) {
+        write(.init(level: "info", stage: stage, source: source, message: nil))
+    }
+    public func error(_ stage: String, source: String?, message: String) {
+        write(.init(level: "error", stage: stage, source: source, message: message))
+    }
+
+    struct Event: Encodable {
+        let ts: Int64; let level: String; let stage: String
+        let source: String?; let message: String?
+        init(level: String, stage: String, source: String?, message: String?) {
+            self.ts = Int64(Date().timeIntervalSince1970 * 1000); self.level = level
+            self.stage = stage; self.source = source; self.message = message
+        }
+    }
+
+    private func write(_ event: Event) {
+        lock.lock(); defer { lock.unlock() }
+        guard let data = try? JSONEncoder().encode(event) else { return }
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: url) else { return }
+        defer { try? handle.close() }
+        try? handle.seekToEnd()
+        try? handle.write(contentsOf: data + Data([0x0A]))
+        try? handle.synchronize()
+    }
+}
+```
+
+Commit: `feat(core): synchronous SyncLogger`.
+
 ### Task 6.1: `TapedeckSyncHelper/main.swift`
 
 Replace the placeholder:
@@ -1942,6 +2443,17 @@ import TapedeckCore
 @main
 struct TapedeckSyncHelper {
     static func main() async {
+        let args = CommandLine.arguments
+
+        // Phase 10.1 sentinel — must run before any pipeline construction so
+        // verify-keychain-sharing.sh can exit cleanly without spinning up SQLite.
+        if args.contains("--read-keychain-sentinel") {
+            let value = (try? KeychainStore.shared.get(
+                service: "tapedeck.source.jwt.sentinel", account: "default")) ?? ""
+            print(value)
+            exit(0)
+        }
+
         let layout = Layout.standard
         let logger = SyncLogger(url: layout.logURL())
         do {
@@ -1951,7 +2463,7 @@ struct TapedeckSyncHelper {
                 exit(0)
             }
             let store = try Store.open(at: layout.dbURL())
-            let keychain = KeychainStore(accessGroup: "$(AppIdentifierPrefix)com.benphillips.tapedeck")
+            let keychain = KeychainStore.shared
             guard let token = try keychain.get(service: "tapedeck.source.jwt", account: "default") else {
                 logger.error("token_missing", source: nil, message: "no JWT in keychain")
                 exit(2)
@@ -1972,9 +2484,14 @@ struct TapedeckSyncHelper {
             AppStateNotifier.post(changedKey: "last_sync_at")
             exit(0)
         } catch SourceClientError.unauthorised {
-            try? store_writeTokenExpired(layout: layout)
+            try? writeTokenStatus(layout: layout, value: "expired")
             AppStateNotifier.post(changedKey: "token_status")
             logger.error("token_expired", source: nil, message: "401 from upstream")
+            exit(4)
+        } catch Pipeline.PipelineError.tokenExpired {
+            // app_state already says 'expired' — keep state, just exit.
+            logger.info("token_already_expired", source: nil)
+            AppStateNotifier.post(changedKey: "token_status")
             exit(4)
         } catch {
             logger.error("cycle_failed", source: nil, message: "\(error)")
@@ -1983,22 +2500,47 @@ struct TapedeckSyncHelper {
     }
 }
 
-private func store_writeTokenExpired(layout: Layout) throws {
+private func writeTokenStatus(layout: Layout, value: String) throws {
     let store = try Store.open(at: layout.dbURL())
     try store.write { db in
-        try db.execute(sql: "INSERT INTO app_state(key,value) VALUES('token_status','expired') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+        try db.execute(sql: """
+            INSERT INTO app_state(key,value) VALUES('token_status', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """, arguments: [value])
     }
 }
 ```
+
+`Pipeline.PipelineError.tokenExpired` propagation: `ensureToken()` already throws it from a stored `app_state.token_status = 'expired'`. The pipeline stage handlers (`downloadOne`, `transcribeOne`, etc.) must re-throw `SourceClientError.unauthorised` instead of recording it as a per-recording error — see the next task.
+
+### Task 6.1a: 401 from any pipeline stage aborts the cycle
+
+`downloadOne`, `transcribeOne`, `classifyOne` currently swallow every error as a `recording_errors` row. A Plaud 401 mid-stage means the JWT is dead — we cannot make progress on any subsequent recording, so the right behaviour is to propagate up to the helper's catch and exit 4.
+
+```swift
+// In Pipeline.swift, inside each stage's per-recording catch block:
+catch SourceClientError.unauthorised {
+    // Don't record per-recording. Let the cycle abort and the helper write
+    // token_status='expired'.
+    throw SourceClientError.unauthorised
+}
+catch { /* existing error-row logic */ }
+```
+
+Because per-recording work runs inside `TaskGroup`s, the propagation pattern is: each stage tracks whether *any* child task observed `SourceClientError.unauthorised`; after the group finishes, if the flag is set, the stage rethrows. Use an `actor AuthState { var failed = false }` injected per stage so concurrent children can flip the bit safely.
+
+**Test** — wire a stub that returns 401 on `tempURL(for:)` for one of three pending downloads; assert `runCycle()` throws `SourceClientError.unauthorised`, no `recording_errors` rows are written for *any* of the three recordings, and `Pipeline.touchLastSync()` was not called (i.e. `app_state.last_sync_at` is unchanged).
 
 Update `project.yml` to drop the placeholder from `TapedeckSyncHelper/Placeholder.swift` (just leave `main.swift`).
 
 Build with `xcodebuild -scheme TapedeckSyncHelper`; should succeed. Commit.
 
-### Task 6.2: `SyncLogger.swift` — JSON-lines logger
+### Task 6.2: (removed — `SyncLogger` is now Task 6.0)
+
+<details><summary>old async-queue implementation — superseded by Task 6.0's synchronous version</summary>
 
 ```swift
-public final class SyncLogger: Sendable {
+public final class SyncLogger: SyncLog, @unchecked Sendable {
     let url: URL
     let queue = DispatchQueue(label: "tapedeck.logger")
 
@@ -2031,13 +2573,22 @@ public final class SyncLogger: Sendable {
 }
 ```
 
+</details>
+
 ---
 
 ## Phase 7 — Tapedeck UI binary
 
 Each task implements one view or one piece of glue. Aim for ~30-line views with @Observable state objects. SwiftUI patterns are conventional; tests focus on the @Observable state classes, not the views.
 
-### Task 7.1: `TapedeckApp.swift` + `AppDelegate.swift`
+### Task 7.1: `TapedeckApp.swift` + `AppDelegate.swift` + shell views
+
+**Files:**
+- Delete: `Tapedeck/Placeholder.swift` (declares the previous `@main` — must be removed before adding a new one or Swift complains about duplicate `@main`).
+- Create: `Tapedeck/TapedeckApp.swift`
+- Create: `Tapedeck/AppDelegate.swift`
+- Create: `Tapedeck/Views/MainView.swift`
+- Create: `Tapedeck/Views/SettingsView.swift`
 
 ```swift
 // TapedeckApp.swift
@@ -2061,6 +2612,62 @@ struct TapedeckApp: App {
     }
 }
 ```
+
+`Tapedeck/Views/MainView.swift` — the three-pane container; child views (Sidebar/List/Detail) come from Tasks 7.4–7.6:
+
+```swift
+struct MainView: View {
+    @Environment(AppState.self) var appState
+    var body: some View {
+        NavigationSplitView {
+            ProjectSidebar()
+        } content: {
+            RecordingList()
+        } detail: {
+            DetailPane()
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Sync now") {
+                    Task { try? await SyncCoordinator.shared.runOnce(reason: "ui_button") }
+                }
+            }
+        }
+        .overlay(alignment: .top) {
+            if appState.tokenStatus == "expired" { ReAuthBanner() }
+        }
+    }
+}
+```
+
+`Tapedeck/Views/SettingsView.swift` — tab container that hosts the four Settings tabs from Tasks 7.7–7.10:
+
+```swift
+struct SettingsView: View {
+    var body: some View {
+        TabView {
+            AccountTab().tabItem { Label("Account", systemImage: "person.crop.circle") }
+            TranscriptionTab().tabItem { Label("Transcription", systemImage: "waveform") }
+            ClassifierTab().tabItem { Label("Classifier", systemImage: "scope") }
+            UpdatesTab().tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
+        }
+        .frame(width: 480, height: 360)
+    }
+}
+```
+
+**Dependencies — all of these must be implemented before Task 7.1 compiles:**
+
+- `AppState` (Task 7.2)
+- `TokenWindow` (Task 7.3)
+- `ProjectSidebar`, `RecordingList`, `DetailPane` (Tasks 7.4–7.6)
+- `AccountTab`, `TranscriptionTab`, `ClassifierTab`, `UpdatesTab` (Tasks 7.7–7.10)
+- `SyncCoordinator` (Task 7.11)
+- `ReAuthBanner` (Task 7.12)
+- `UpdateManager` (Task 8.1)
+- `LaunchAgent` (Task 9.1)
+
+So although Task 7.1 owns the topmost shell, it is the **last** Phase-7/8/9 task to land. The implementation order is: 7.2 → 7.3 → 7.4 → 7.5 → 7.6 → 7.7 → 7.8 → 7.9 → 7.10 → 7.11 → 7.12 → 8.1 → 9.1 → **7.1** → 7.13 (backfill, which depends on the running app). Each preceding task ships a `swift test`-passing or `xcodebuild`-passing checkpoint on its own. Until 7.1 lands, the UI scheme keeps the Phase 1 placeholder `@main`.
 
 ```swift
 // AppDelegate.swift
@@ -2098,39 +2705,154 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 ### Task 7.2: `AppState.swift` — observable wrapper around Store
 
 ```swift
+// ABOUTME: Observable façade over Store for the UI. Refresh is the single read path.
+// ABOUTME: Helper writes are seen via DistributedNotificationCenter + 30s fallback poll.
+
+import Foundation
+import GRDB
+import Observation
+import TapedeckCore
+
 @Observable
 @MainActor
 final class AppState {
     var recordings: [Recording] = []
     var projects: [Project] = []
-    var tokenStatus: String = "ok"          // "ok" | "expired" | "missing"
+    var errors: [String: [SyncStage: StageError]] = [:]     // keyed by recording.sourceId
+    var tokenStatus: String = "ok"
     var lastSyncAt: Int64? = nil
-    var selectedProject: String? = nil      // "all" | "unassigned" | project.id
+    var selectedProject: String? = "all"
+
     private let store: Store
     private let projectRepo: ProjectRepository
     private let recordingRepo: RecordingRepository
+    private var timer: Timer?
 
     init() {
         self.store = try! Store.open(at: Layout.standard.dbURL())
         self.projectRepo = ProjectRepository(store: store)
         self.recordingRepo = RecordingRepository(store: store)
+        startPolling()
+    }
+
+    private func startPolling() {
+        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { try? await self.refresh() }
+        }
     }
 
     func refresh(changedKey: String? = nil) async throws {
         let projects = try projectRepo.listActive()
-        let recordings: [Recording] = try store.read { db in
-            try Row.fetchAll(db, sql: "SELECT * FROM recordings ORDER BY started_at DESC").map { /* map */ ... }
+        let recordings = try store.read { db in try Self.fetchAllRecordings(db) }
+        let errors = try store.read { db in try Self.fetchErrors(db) }
+        let storedStatus = try store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key = 'token_status'")
         }
-        await MainActor.run { self.projects = projects; self.recordings = recordings }
+        // Authoritative source for "do we have a token at all?" is the keychain,
+        // not app_state. app_state.token_status only carries the "expired" marker
+        // that the helper writes when it sees a Plaud 401.
+        let hasToken = (try? KeychainStore.shared.get(
+            service: "tapedeck.source.jwt", account: "default")) != nil
+        let resolved: String
+        switch (hasToken, storedStatus) {
+        case (false, _):        resolved = "missing"
+        case (true, "expired"): resolved = "expired"
+        case (true, _):         resolved = "ok"
+        }
+        let lastSyncAt = try store.read { db in
+            try Int64.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key = 'last_sync_at'")
+        }
+        self.projects = projects
+        self.recordings = recordings
+        self.errors = errors
+        self.tokenStatus = resolved
+        self.lastSyncAt = lastSyncAt
+    }
+
+    /// Called by TokenWindow after a successful capture, by SettingsView's sign-out, etc.
+    /// Clears the "expired" marker so the next cycle is allowed to run.
+    func clearTokenStatus() throws {
+        try store.write { db in
+            try db.execute(sql: "DELETE FROM app_state WHERE key = 'token_status'")
+        }
+    }
+
+    static func fetchAllRecordings(_ db: Database) throws -> [Recording] {
+        try Row.fetchAll(db, sql: "SELECT * FROM recordings ORDER BY started_at DESC").map { row in
+            Recording(
+                sourceId: row["source_id"], filename: row["filename"],
+                startedAt: row["started_at"], durationMs: row["duration_ms"],
+                filesize: row["filesize"], audioExtension: row["audio_extension"],
+                audioDownloadedAt: row["audio_downloaded_at"],
+                transcribedAt: row["transcribed_at"],
+                projectId: row["project_id"],
+                classificationConfidence: row["classification_confidence"],
+                classificationReasoning: row["classification_reasoning"],
+                classifiedAt: row["classified_at"],
+                classifiedBy: row["classified_by"],
+                projectLinkState: Recording.LinkState(rawValue: row["project_link_state"]) ?? .none,
+                linkedProjectId: row["linked_project_id"],
+                lastSeenAt: row["last_seen_at"])
+        }
+    }
+
+    static func fetchErrors(_ db: Database) throws -> [String: [SyncStage: StageError]] {
+        var out: [String: [SyncStage: StageError]] = [:]
+        for row in try Row.fetchAll(db, sql: "SELECT * FROM recording_errors") {
+            let sid: String = row["source_id"]
+            guard let stage = SyncStage(rawValue: row["stage"]) else { continue }
+            out[sid, default: [:]][stage] = StageError(
+                sourceId: sid, stage: stage,
+                occurredAt: row["occurred_at"], attempt: row["attempt"],
+                message: row["message"])
+        }
+        return out
+    }
+
+    /// User-initiated overrides — UI calls this from the Detail pane's project picker.
+    func overrideProject(sourceId: String, newProjectId: String?) async throws {
+        try recordingRepo.setClassification(
+            sourceId: sourceId, projectId: newProjectId,
+            confidence: 1.0, reasoning: "manual override",
+            by: "user", at: Int64(Date().timeIntervalSince1970 * 1000),
+            linkState: .pendingRelink)
+        try await refresh()
+        Task.detached { try? await SyncCoordinator.shared.runOnce(reason: "manual_override") }
+    }
+
+    /// Detail pane "Retry" button — wipes the error row so the next cycle retries.
+    func retry(sourceId: String, stage: SyncStage) async throws {
+        try recordingRepo.clearError(sourceId: sourceId, stage: stage)
+        try await refresh()
     }
 }
 ```
 
-Plus poller — start a 30s `Timer` in `init()` that calls `refresh()` when the window is key.
+The 30s poll is the fallback. The primary push path is `AppStateNotifier.subscribe` in `AppDelegate` (Task 7.1), which calls `refresh()` immediately on each helper notification.
 
 ### Task 7.3: `TokenWindow.swift` — WKWebView
 
-Mirror design §5: non-persistent WKWebsiteDataStore, Safari user agent, 1s `evaluateJavaScript("localStorage.getItem('pld_tokenstr')")`, on hit JSON-parse, strip leading `bearer `, write via `KeychainStore.set(service: "tapedeck.source.jwt", account: "default", value:)`, post `AppStateNotifier.post(changedKey: "token_status")`, close window. After 90s timeout, reveal a paste-token TextField.
+Mirror design §5: non-persistent `WKWebsiteDataStore`, Safari user-agent, 1s `evaluateJavaScript("localStorage.getItem('pld_tokenstr')")`, after 90 s reveal a paste-token TextField. Token persistence is concrete:
+
+```swift
+@MainActor
+final class TokenWindowController {
+    func saveCapturedToken(_ raw: String, store: AppState) throws {
+        // localStorage returns a JSON-quoted string with a leading "bearer " prefix.
+        let unquoted = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        let token = unquoted.hasPrefix("bearer ")
+            ? String(unquoted.dropFirst("bearer ".count)) : unquoted
+        try KeychainStore.shared.set(
+            service: "tapedeck.source.jwt", account: "default", value: token)
+        // Clear any prior 'expired' flag so the helper resumes.
+        try store.clearTokenStatus()
+        AppStateNotifier.post(changedKey: "token_status")
+    }
+}
+```
+
+`AppState.clearTokenStatus()` writes `DELETE FROM app_state WHERE key = 'token_status'`. The `Window` is closed by the caller on success.
 
 ### Task 7.4: `ProjectSidebar.swift` — left pane
 
@@ -2144,34 +2866,167 @@ Filters by `appState.selectedProject`; sorted by `startedAt` desc. Each row: dat
 
 Header (title, time, duration, file size); classification block (Picker over `projects`, confidence, reasoning); `▶ Play` button using `AVAudioPlayer(contentsOf:)`; transcript as `TextEditor` (read-only) with speaker labels. Disclosure group "Show metadata" with the raw `.source.json`.
 
-### Task 7.7-7.10: `SettingsView.swift` — four tabs
+### Task 7.7: Settings → Account tab
 
-`Account`, `Transcription`, `Classifier`, `Updates`. Updates tab binds `Toggle("Automatically check", isOn: $automaticallyChecksForUpdates)` against `updateManager.controller.updater.automaticallyChecksForUpdates` and a `Button("Check now") { updateManager.checkForUpdates() }`.
-
-### Task 7.11: `SyncCoordinator.swift` — single-flight wrapper around `Process`
+**Files:**
+- Create: `Tapedeck/Views/Settings/AccountTab.swift`
 
 ```swift
-@MainActor
-final class SyncCoordinator {
-    static let shared = SyncCoordinator()
-    private var inflight: Task<Void, Error>?
+struct AccountTab: View {
+    @Environment(AppState.self) var appState
+    @State private var openTokenWindow = false
 
-    func runOnce(reason: String) async throws {
-        if let t = inflight { try await t.value; return }
-        let task = Task { try await self.spawn() }
-        inflight = task
-        defer { inflight = nil }
-        try await task.value
+    var body: some View {
+        Form {
+            Section("Plaud") {
+                switch appState.tokenStatus {
+                case "ok":
+                    Label("Signed in", systemImage: "checkmark.seal")
+                    Button("Sign out") { try? signOut() }
+                case "expired":
+                    Label("Session expired — re-sign in", systemImage: "exclamationmark.triangle")
+                    Button("Re-sign in via web…") { openTokenWindow = true }
+                default:    // "missing"
+                    Label("Not signed in", systemImage: "key")
+                    Button("Sign in via web…") { openTokenWindow = true }
+                }
+            }
+            Section("Background sync") {
+                Toggle("Enable LaunchAgent",
+                       isOn: Binding(get: launchAgentEnabled,
+                                     set: setLaunchAgentEnabled))
+            }
+        }
+        .sheet(isPresented: $openTokenWindow) { TokenWindow() }
     }
 
-    private func spawn() async throws {
-        let proc = Process()
-        proc.executableURL = Bundle.main.bundleURL.appending(path: "Contents/MacOS/TapedeckSyncHelper")
-        try proc.run()
-        proc.waitUntilExit()
+    private func signOut() throws {
+        try KeychainStore.shared.delete(service: "tapedeck.source.jwt", account: "default")
+        try appState.clearTokenStatus()
+        Task { try? await appState.refresh() }
+        AppStateNotifier.post(changedKey: "token_status")
+    }
+    private func launchAgentEnabled() -> Bool { FileManager.default.fileExists(atPath: LaunchAgent.plistURL.path) }
+    private func setLaunchAgentEnabled(_ on: Bool) {
+        if on { LaunchAgent.installIfNeeded() } else { LaunchAgent.uninstall() }
     }
 }
 ```
+
+### Task 7.8: Settings → Transcription tab (Deepgram key)
+
+```swift
+struct TranscriptionTab: View {
+    @State private var key: String = ""
+    @State private var saveState: SaveState = .idle
+    enum SaveState { case idle, saved, invalid }
+
+    var body: some View {
+        Form {
+            Section("Deepgram") {
+                SecureField("API key", text: $key)
+                    .onAppear {
+                        key = (try? KeychainStore.shared.get(
+                            service: "tapedeck.deepgram.key", account: "default")) ?? ""
+                    }
+                HStack {
+                    Button("Save") { saveKey() }
+                        .disabled(key.isEmpty)
+                    Button("Test connection") { Task { await testKey() } }
+                        .disabled(key.isEmpty)
+                    statusLabel
+                }
+            }
+        }
+    }
+
+    @ViewBuilder var statusLabel: some View {
+        switch saveState {
+        case .idle:    EmptyView()
+        case .saved:   Label("Saved", systemImage: "checkmark.circle").foregroundStyle(.green)
+        case .invalid: Label("Key rejected", systemImage: "xmark.octagon").foregroundStyle(.red)
+        }
+    }
+
+    private func saveKey() {
+        try? KeychainStore.shared.set(service: "tapedeck.deepgram.key", account: "default", value: key)
+        saveState = .saved
+    }
+
+    private func testKey() async {
+        // 1-byte WAV header is enough to provoke either 200 or 401; we only care about auth.
+        do {
+            let c = DeepgramClient(apiKey: key)
+            _ = try await c.transcribe(audioAt: URL(fileURLWithPath: "/dev/null"),
+                                       contentType: "audio/wav")
+            saveState = .saved
+        } catch DeepgramClient.DeepgramError.invalidApiKey {
+            saveState = .invalid
+        } catch {
+            saveState = .saved   // any non-auth error means the key was accepted
+        }
+    }
+}
+```
+
+### Task 7.9: Settings → Classifier tab (Gemini key + confidence threshold)
+
+Same shape as the Transcription tab but writing to `service: "tapedeck.gemini.key"` and including a `Slider("Confidence threshold", value: $threshold, in: 0.5...0.95)` that writes to `app_state.classifier_threshold`. `Pipeline.classifyOne` reads that value (defaulting to 0.7) instead of the hard-coded literal. Test the key with a 1-character transcript + empty hints; treat any non-`invalidApiKey` outcome as success.
+
+### Task 7.10: Settings → Updates tab
+
+Binds `Toggle("Automatically check", isOn: $automaticallyChecksForUpdates)` against `updateManager.controller.updater.automaticallyChecksForUpdates` and a `Button("Check now") { updateManager.checkForUpdates() }`.
+
+### Task 7.11: `SyncCoordinator.swift` — non-blocking single-flight wrapper around `Process`
+
+The helper can take minutes to finish; we must never call `waitUntilExit()` on the main actor. The actor below uses `Process.terminationHandler` + a `CheckedContinuation` so the await yields control back to SwiftUI immediately.
+
+```swift
+// ABOUTME: Spawns TapedeckSyncHelper as a child process. One concurrent run at a time.
+// ABOUTME: Resolves via terminationHandler so the main actor never blocks on waitUntilExit.
+
+import Foundation
+
+actor SyncCoordinator {
+    static let shared = SyncCoordinator()
+    private var inflight: Task<Int32, Error>?
+
+    /// Spawns the helper if not already running; returns its termination status (0 on success).
+    @discardableResult
+    func runOnce(reason: String) async throws -> Int32 {
+        if let existing = inflight { return try await existing.value }
+        let task = Task { try await self.spawn(reason: reason) }
+        inflight = task
+        defer { inflight = nil }
+        return try await task.value
+    }
+
+    private func spawn(reason: String) async throws -> Int32 {
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Int32, Error>) in
+            let proc = Process()
+            proc.executableURL = Bundle.main.bundleURL
+                .appending(path: "Contents/MacOS/TapedeckSyncHelper")
+            proc.environment = ProcessInfo.processInfo.environment
+                .merging(["TAPEDECK_SYNC_REASON": reason]) { _, new in new }
+            proc.terminationHandler = { p in
+                cont.resume(returning: p.terminationStatus)
+            }
+            do { try proc.run() }
+            catch { cont.resume(throwing: error) }
+        }
+    }
+}
+```
+
+Non-zero exit codes surface in the UI: `AppDelegate` awaits `SyncCoordinator.shared.runOnce(...)`, logs the status, and posts an in-app toast on values other than 0. The mapping comes from `TapedeckSyncHelper/main.swift`:
+
+| Exit | Meaning | UI surface |
+|------|---------|------------|
+| 0    | success | none — refresh on notification |
+| 1    | cycle threw | "Sync failed — check logs" |
+| 2    | token missing | "Sign in to Plaud" banner |
+| 3    | API key missing | Settings highlight |
+| 4    | token expired | "Sign in to Plaud" banner |
 
 ### Task 7.12: re-auth banner
 
@@ -2293,28 +3148,45 @@ Wire `LaunchAgent.installIfNeeded()` into `AppDelegate.applicationDidFinishLaunc
 
 ## Phase 10 — Build & release scripts
 
-### Task 10.1: `scripts/build-release.sh`
+### Task 10.1: Sentinel CLI flags on both binaries
 
-Adapt `~/repos/countdown/scripts/build-release.sh` verbatim except:
-- Replace `Countdown` with `Tapedeck` throughout.
-- Add Step 9: `scripts/verify-keychain-sharing.sh build/export/Tapedeck.app` between DMG creation and notarisation.
-- Move `git tag v$VER && git push --tags` to after the gh-pages push (design §8).
+Done first because `scripts/verify-keychain-sharing.sh` (Task 10.2) and `scripts/build-release.sh` (Task 10.3) both depend on these flags existing.
 
-Full pattern from countdown:
-1. Bail on dirty tree or existing tag.
-2. Bump versions in `Tapedeck/Info.plist`, `TapedeckSyncHelper/Info.plist`, and `project.yml`.
-3. `git commit -m "release: v$VER"` (NO TAG YET).
-4. `xcodegen generate`.
-5. `xcodebuild archive`.
-6. `xcodebuild -exportArchive` with ExportOptions.plist.
-7. `xcrun notarytool submit … --wait` and `xcrun stapler staple`.
-8. `create-dmg`.
-9. `scripts/verify-keychain-sharing.sh` against the signed `.app`.
-10. EdDSA sign DMG.
-11. `generate_appcast build/`.
-12. Push DMG + appcast to gh-pages worktree.
-13. `git tag v$VER && git push --tags`.
-14. `gh release create v$VER build/Tapedeck-$VER.dmg --generate-notes`.
+**Files:**
+- Modify: `Tapedeck/TapedeckApp.swift` (or add `Tapedeck/SentinelMode.swift`)
+- Modify: `TapedeckSyncHelper/main.swift`
+
+The UI binary normally launches SwiftUI; we add a pre-`App.main()` switch so `--write-keychain-sentinel <UUID>` writes the sentinel and exits without ever creating a window:
+
+```swift
+// SentinelMode.swift
+import Foundation
+import TapedeckCore
+
+@main
+enum AppEntry {
+    static func main() {
+        let args = CommandLine.arguments
+        if let idx = args.firstIndex(of: "--write-keychain-sentinel"),
+           idx + 1 < args.count {
+            do {
+                try KeychainStore.shared.set(
+                    service: "tapedeck.source.jwt.sentinel",
+                    account: "default",
+                    value: args[idx + 1])
+                exit(0)
+            } catch { fputs("\(error)\n", stderr); exit(2) }
+        }
+        TapedeckApp.main()
+    }
+}
+```
+
+(Remove `@main` from `TapedeckApp` when `AppEntry` is added.)
+
+The helper binary gets a sibling `--read-keychain-sentinel` flag inside `TapedeckSyncHelper.main()` — see Task 6.1 for the canonical placement (it must be the first thing inside `static func main() async`, before any logger or SQLite construction, so the sentinel run is side-effect-free and exits in milliseconds).
+
+`scripts/verify-keychain-sharing.sh` (Task 10.2) writes a UUID via the UI flag and reads it back via the helper flag; mismatch aborts the release.
 
 ### Task 10.2: `scripts/verify-keychain-sharing.sh`
 
@@ -2328,7 +3200,6 @@ SENTINEL=$(uuidgen)
 UI="$APP/Contents/MacOS/Tapedeck"
 HELPER="$APP/Contents/MacOS/TapedeckSyncHelper"
 
-# UI writes via a hidden --write-sentinel flag (added behind #if DEBUG_OR_RELEASE)
 "$UI" --write-keychain-sentinel "$SENTINEL"
 read_back=$("$HELPER" --read-keychain-sentinel)
 if [ "$read_back" = "$SENTINEL" ]; then
@@ -2338,9 +3209,29 @@ else
 fi
 ```
 
-Add the matching CLI flags to both binaries. The UI flag exits immediately after writing (without showing the window); the helper flag does the same on read.
+### Task 10.3: `scripts/build-release.sh`
 
-### Task 10.3: CI workflow
+Adapt `~/repos/countdown/scripts/build-release.sh` (full contents in the Phase 0 research above). Order is fixed below — the keychain verification runs against the signed *but unnotarised* `.app` because notarisation is non-recoverable: if the keychain check fails after notarytool submission we've burned an Apple-side notary record for nothing. Tagging is the last operation so a notarisation or upload failure never leaves a tag pointing at a release that doesn't exist on disk.
+
+1. Bail on dirty tree or existing tag.
+2. Bump `CFBundleShortVersionString` and `CFBundleVersion` in `Tapedeck/Info.plist`, `TapedeckSyncHelper/Info.plist`, and `project.yml`.
+3. `git commit -m "release: v$VER"` — bump commit only, no tag yet.
+4. `xcodegen generate`.
+5. `xcodebuild archive` → `build/Tapedeck.xcarchive`.
+6. `xcodebuild -exportArchive -exportOptionsPlist ExportOptions.plist` → `build/export/Tapedeck.app` (Developer ID signed, hardened runtime, *not yet notarised*).
+7. **`scripts/verify-keychain-sharing.sh build/export/Tapedeck.app`** — round-trip a sentinel JWT between UI and helper binaries. Abort on failure before going any further; the failure mode here is entitlement drift, which would also break notarisation in subtle ways.
+8. `create-dmg` → `build/Tapedeck-$VER.dmg` (wraps the signed `.app`).
+9. `xcrun notarytool submit build/Tapedeck-$VER.dmg --keychain-profile tapedeck-notarize --wait` — `notarytool` accepts only `.zip`, `.pkg`, or `.dmg`, never a bare `.app`. Stapling the DMG also staples the `.app` it contains when the disk image is rebuilt on mount.
+10. `xcrun stapler staple build/Tapedeck-$VER.dmg`.
+11. EdDSA sign the DMG: `scripts/sparkle-tools/bin/sign_update build/Tapedeck-$VER.dmg`.
+12. `scripts/sparkle-tools/bin/generate_appcast build/` → `build/appcast.xml`.
+13. Push `Tapedeck-$VER.dmg` + `appcast.xml` to the `gh-pages` branch (worktree pattern — see countdown's script lines 112–157).
+14. `gh release create v$VER build/Tapedeck-$VER.dmg --generate-notes` — creates the tag *and* the GitHub Release in one operation; this is when v$VER first exists.
+15. Print a release-notes prompt.
+
+`gh release create` creates the tag at HEAD if it doesn't already exist, so we don't need a separate `git tag && git push --tags` step. The order matches countdown's release script except for the inserted keychain-verification step.
+
+### Task 10.4: CI workflow
 
 **Files:**
 - Create: `.github/workflows/test.yml`
