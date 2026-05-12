@@ -1,0 +1,9 @@
+{
+  "status": -302,
+  "msg": "user region mismatch",
+  "data": {
+    "domains": {
+      "api": "https://api-euc1.plaud.ai"
+    }
+  }
+}
