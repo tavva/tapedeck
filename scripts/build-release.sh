@@ -13,7 +13,7 @@ BUILD_DIR="./build"
 ARCHIVE_PATH="$BUILD_DIR/Tapedeck.xcarchive"
 EXPORT_PATH="$BUILD_DIR/export"
 DMG_PATH="$BUILD_DIR/Tapedeck-${VERSION}.dmg"
-NOTARIZE_PROFILE="${NOTARIZE_PROFILE:-tapedeck-notarize}"
+NOTARIZE_PROFILE="${NOTARIZE_PROFILE:-countdown-notarize}"
 
 # Step 1: Bail on dirty tree or pre-existing tag.
 if ! git diff --quiet HEAD; then
