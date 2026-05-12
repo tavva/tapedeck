@@ -1,0 +1,71 @@
+{
+  "metadata": {
+    "transaction_key": "deprecated",
+    "request_id": "11111111-2222-3333-4444-555555555555",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "created": "2026-05-12T11:00:00.000Z",
+    "duration": 12.4,
+    "channels": 1,
+    "models": ["nova-3"],
+    "model_info": {
+      "nova-3": {
+        "name": "general-nova-3",
+        "version": "2024-01-09.29447",
+        "arch": "nova-3"
+      }
+    }
+  },
+  "results": {
+    "channels": [
+      {
+        "alternatives": [
+          {
+            "transcript": "Hey, I think we should move the homeschool curriculum review to Thursday. Yeah, that works for me. Let's plan to cover algebra and the history project.",
+            "confidence": 0.9876543,
+            "words": [
+              { "word": "hey", "start": 0.1, "end": 0.3, "confidence": 0.99, "speaker": 0, "speaker_confidence": 0.97, "punctuated_word": "Hey," },
+              { "word": "i", "start": 0.4, "end": 0.45, "confidence": 0.99, "speaker": 0, "speaker_confidence": 0.97, "punctuated_word": "I" },
+              { "word": "think", "start": 0.46, "end": 0.7, "confidence": 0.99, "speaker": 0, "speaker_confidence": 0.97, "punctuated_word": "think" },
+              { "word": "yeah", "start": 4.2, "end": 4.4, "confidence": 0.99, "speaker": 1, "speaker_confidence": 0.95, "punctuated_word": "Yeah," },
+              { "word": "that", "start": 4.5, "end": 4.7, "confidence": 0.99, "speaker": 1, "speaker_confidence": 0.95, "punctuated_word": "that" },
+              { "word": "lets", "start": 6.1, "end": 6.3, "confidence": 0.99, "speaker": 0, "speaker_confidence": 0.97, "punctuated_word": "Let's" },
+              { "word": "plan", "start": 6.4, "end": 6.6, "confidence": 0.99, "speaker": 0, "speaker_confidence": 0.97, "punctuated_word": "plan" }
+            ]
+          }
+        ]
+      }
+    ],
+    "utterances": [
+      {
+        "start": 0.1,
+        "end": 3.9,
+        "confidence": 0.97,
+        "channel": 0,
+        "transcript": "Hey, I think we should move the homeschool curriculum review to Thursday.",
+        "words": [],
+        "speaker": 0,
+        "id": "u1"
+      },
+      {
+        "start": 4.2,
+        "end": 5.8,
+        "confidence": 0.97,
+        "channel": 0,
+        "transcript": "Yeah, that works for me.",
+        "words": [],
+        "speaker": 1,
+        "id": "u2"
+      },
+      {
+        "start": 6.1,
+        "end": 12.0,
+        "confidence": 0.97,
+        "channel": 0,
+        "transcript": "Let's plan to cover algebra and the history project.",
+        "words": [],
+        "speaker": 0,
+        "id": "u3"
+      }
+    ]
+  }
+}
