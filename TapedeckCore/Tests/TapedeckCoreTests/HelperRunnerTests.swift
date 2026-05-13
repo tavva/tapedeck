@@ -30,6 +30,18 @@ struct HelperRunnerTests {
         #expect(parseHelperArguments(["helper", "--unknown"]) == .fullCycle)
     }
 
+    @Test func transcribePendingFlagParses() {
+        #expect(parseHelperArguments(["helper", "--transcribe-pending"]) == .transcribePending)
+    }
+
+    @Test func transcribeSourceFlagParsesWithId() {
+        #expect(parseHelperArguments(["helper", "--transcribe-source", "abc"]) == .transcribeSource("abc"))
+    }
+
+    @Test func transcribeSourceWithoutIdFallsBackToFullCycle() {
+        #expect(parseHelperArguments(["helper", "--transcribe-source"]) == .fullCycle)
+    }
+
     // MARK: runHelper fixtures
 
     private func makeLayout() -> Layout {
