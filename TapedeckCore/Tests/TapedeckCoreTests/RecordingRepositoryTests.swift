@@ -22,6 +22,23 @@ struct RecordingRepositoryTests {
         #expect(try repo.count() == 1)
     }
 
+    @Test func findReturnsNilForUnknownSourceId() throws {
+        let (_, repo) = try setup()
+        #expect(try repo.find(sourceId: "missing") == nil)
+    }
+
+    @Test func findReturnsRecordingForKnownSourceId() throws {
+        let (_, repo) = try setup()
+        let r = Recording(sourceId: "abc", filename: "Meeting", startedAt: 1000,
+                          durationMs: 60_000, filesize: 1_024, audioExtension: "opus",
+                          lastSeenAt: 1)
+        try repo.upsertFromRemote(r)
+        let found = try repo.find(sourceId: "abc")
+        #expect(found?.sourceId == "abc")
+        #expect(found?.filename == "Meeting")
+        #expect(found?.audioExtension == "opus")
+    }
+
     @Test func recordErrorThenClearOnSuccess() throws {
         let (_, repo) = try setup()
         let r = Recording(sourceId: "abc", filename: "x", startedAt: 1, durationMs: 1,

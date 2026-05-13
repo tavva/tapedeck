@@ -110,24 +110,33 @@ public struct RecordingRepository: Sendable {
     public func recordingsNeedingClassification() throws -> [Recording] { try fetchAll(where: "transcribed_at IS NOT NULL AND classified_at IS NULL") }
     public func recordingsNeedingRelink() throws -> [Recording] { try fetchAll(where: "project_link_state = 'pending_relink'") }
 
+    public func find(sourceId: String) throws -> Recording? {
+        try store.read { db in
+            try Row.fetchOne(db, sql: "SELECT * FROM recordings WHERE source_id = ?", arguments: [sourceId])
+                .map(Self.makeRecording)
+        }
+    }
+
+    private static func makeRecording(_ row: Row) -> Recording {
+        Recording(
+            sourceId: row["source_id"], filename: row["filename"],
+            startedAt: row["started_at"], durationMs: row["duration_ms"],
+            filesize: row["filesize"], audioExtension: row["audio_extension"],
+            audioDownloadedAt: row["audio_downloaded_at"],
+            transcribedAt: row["transcribed_at"],
+            projectId: row["project_id"],
+            classificationConfidence: row["classification_confidence"],
+            classificationReasoning: row["classification_reasoning"],
+            classifiedAt: row["classified_at"],
+            classifiedBy: row["classified_by"],
+            projectLinkState: Recording.LinkState(rawValue: row["project_link_state"]) ?? .none,
+            linkedProjectId: row["linked_project_id"],
+            lastSeenAt: row["last_seen_at"])
+    }
+
     private func fetchAll(where clause: String) throws -> [Recording] {
         try store.read { db in
-            try Row.fetchAll(db, sql: "SELECT * FROM recordings WHERE \(clause)").map { row in
-                Recording(
-                    sourceId: row["source_id"], filename: row["filename"],
-                    startedAt: row["started_at"], durationMs: row["duration_ms"],
-                    filesize: row["filesize"], audioExtension: row["audio_extension"],
-                    audioDownloadedAt: row["audio_downloaded_at"],
-                    transcribedAt: row["transcribed_at"],
-                    projectId: row["project_id"],
-                    classificationConfidence: row["classification_confidence"],
-                    classificationReasoning: row["classification_reasoning"],
-                    classifiedAt: row["classified_at"],
-                    classifiedBy: row["classified_by"],
-                    projectLinkState: Recording.LinkState(rawValue: row["project_link_state"]) ?? .none,
-                    linkedProjectId: row["linked_project_id"],
-                    lastSeenAt: row["last_seen_at"])
-            }
+            try Row.fetchAll(db, sql: "SELECT * FROM recordings WHERE \(clause)").map(Self.makeRecording)
         }
     }
 }

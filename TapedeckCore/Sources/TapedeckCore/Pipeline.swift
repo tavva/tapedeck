@@ -23,6 +23,13 @@ public actor Pipeline {
     }
     public enum PipelineError: Error, Equatable { case tokenExpired, tokenMissing }
 
+    public enum ClassifyError: Error, Equatable {
+        case unknownRecording(String)
+        case transcriptMissing(URL)
+        case providerFailed(String)
+        case noActiveProjects
+    }
+
     let deps: Deps
     let recordings: RecordingRepository
     let projects: ProjectRepository
@@ -83,5 +90,13 @@ public actor Pipeline {
             try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key = 'classifier_threshold'")
         }
         return raw.flatMap(Double.init) ?? 0.7
+    }
+
+    /// Reads `app_state.auto_classify`, defaulting to false when absent or non-`"true"`.
+    func autoClassifyEnabled() throws -> Bool {
+        let raw: String? = try deps.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key = 'auto_classify'")
+        }
+        return raw == "true"
     }
 }
