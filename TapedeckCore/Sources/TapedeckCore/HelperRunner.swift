@@ -73,7 +73,7 @@ public func runHelper(_ cmd: HelperCommand, deps: HelperDeps) async -> Int32 {
     case .classifyPending: return await runClassifyPending(deps: deps)
     case .classifySource(let sid): return await runClassifySource(sid, deps: deps)
     case .transcribePending: return await runTranscribePending(deps: deps)
-    case .transcribeSource: return 1   // wired in Task 10
+    case .transcribeSource(let sid): return await runTranscribeSource(sid, deps: deps)
     }
 }
 
@@ -195,6 +195,28 @@ private func runTranscribePending(deps: HelperDeps) async -> Int32 {
         return 0
     } catch {
         deps.logger.error("transcribe_pending_failed", source: nil, message: "\(error)")
+        return 1
+    }
+}
+
+@MainActor
+private func runTranscribeSource(_ sourceId: String, deps: HelperDeps) async -> Int32 {
+    do {
+        let lock = try SyncLock(path: deps.layout.lockURL())
+        guard lock.tryAcquire() else {
+            deps.logger.info("transcribe_skipped_already_running", source: sourceId)
+            return 0
+        }
+        let store = try deps.openStore(deps.layout.dbURL())
+        guard let pipeline = try buildTranscribePipeline(deps: deps, store: store) else {
+            return 3
+        }
+        try await pipeline.transcribeOne(sourceId: sourceId)
+        try await pipeline.relinkChanged()
+        deps.notify("recordings")
+        return 0
+    } catch {
+        deps.logger.error("transcribe_source_failed", source: sourceId, message: "\(error)")
         return 1
     }
 }
