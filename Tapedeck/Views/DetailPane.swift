@@ -1,12 +1,10 @@
 // ABOUTME: Right pane — selected recording details, transcript, classification picker.
 
 import SwiftUI
-import AVKit
 import TapedeckCore
 
 struct DetailPane: View {
     @Environment(AppState.self) var appState
-    @State private var player: AVAudioPlayer?
     @State private var transcriptText: String = ""
 
     private var selected: Recording? {
@@ -50,8 +48,11 @@ struct DetailPane: View {
                         Text(reasoning).font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                Button("▶ Play") { play(rec) }
-                    .disabled(rec.audioDownloadedAt == nil)
+                Button("▶ Play") {
+                    appState.playback.load(rec)
+                    appState.playback.togglePlayPause()
+                }
+                .disabled(rec.audioDownloadedAt == nil)
                 TextEditor(text: .constant(transcriptText))
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 220)
@@ -68,15 +69,5 @@ struct DetailPane: View {
         let stem = Layout.standard.stem(sourceId: rec.sourceId, title: rec.filename)
         let url = dir.appending(path: "\(stem).transcript.txt")
         transcriptText = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-    }
-
-    private func play(_ rec: Recording) {
-        let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
-        let dir = Layout.standard.audioDir(date: date)
-        let stem = Layout.standard.stem(sourceId: rec.sourceId, title: rec.filename)
-        let ext = rec.audioExtension ?? "audio"
-        let url = dir.appending(path: "\(stem).\(ext)")
-        player = try? AVAudioPlayer(contentsOf: url)
-        player?.play()
     }
 }
