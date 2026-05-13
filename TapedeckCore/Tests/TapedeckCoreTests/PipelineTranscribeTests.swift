@@ -275,4 +275,31 @@ struct PipelineTranscribeTests {
         let updated = try #require(try fx.recordings.find(sourceId: rec.sourceId))
         #expect(updated.projectLinkState == .none)
     }
+
+    @Test func transcribePending_runs_regardlessOfAutoTranscribe() async throws {
+        let fx = try makeFixture()
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        _ = try insertDownloadedRecording(fx)
+        // auto_transcribe intentionally absent
+        stubDeepgramOK(fx)
+
+        try await makePipelineWith(fx).transcribePending()
+
+        #expect(try fx.recordings.recordingsNeedingTranscription().isEmpty)
+    }
+
+    @Test func transcribePending_bypassesFailureGate() async throws {
+        let fx = try makeFixture()
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let rec = try insertDownloadedRecording(fx)
+        for _ in 0..<3 {
+            try fx.recordings.recordError(sourceId: rec.sourceId, stage: .transcribe,
+                                          at: 5, message: "earlier")
+        }
+        stubDeepgramOK(fx)
+
+        try await makePipelineWith(fx).transcribePending()
+
+        #expect(try fx.recordings.recordingsNeedingTranscription().isEmpty)
+    }
 }
