@@ -50,6 +50,12 @@ struct MainView: View {
                 DetailPane()
             }
             .toolbar {
+                ToolbarItem(placement: .status) {
+                    let c = appState.statusCounts
+                    Text("\(c.total) · \(c.toTranscribe) to transcribe · \(c.toClassify) to classify")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 ToolbarItem(placement: .primaryAction) {
                     if isSyncing {
                         HStack(spacing: 6) {
