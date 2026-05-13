@@ -13,13 +13,13 @@ struct ProjectSidebar: View {
         @Bindable var bindable = appState
         List(selection: $bindable.selectedProject) {
             Section("Views") {
-                Label("All", systemImage: "tray.full").tag("all" as String?)
-                Label("Unassigned", systemImage: "questionmark.diamond").tag("unassigned" as String?)
-                Label("Archived", systemImage: "archivebox").tag("archived" as String?)
+                Label("All", systemImage: "tray.full").tag("all")
+                Label("Unassigned", systemImage: "questionmark.diamond").tag("unassigned")
+                Label("Archived", systemImage: "archivebox").tag("archived")
             }
             Section("Projects") {
                 ForEach(appState.projects, id: \.id) { project in
-                    Label(project.displayName, systemImage: "folder").tag(project.id as String?)
+                    Label(project.displayName, systemImage: "folder").tag(project.id)
                 }
                 Button(action: { showingNewProject = true }) {
                     Label("New project…", systemImage: "plus")
