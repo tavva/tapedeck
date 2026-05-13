@@ -19,10 +19,9 @@ struct RecordingList: View {
         }
     }
 
-    @State private var selection: String?
-
     var body: some View {
-        List(filtered, id: \.sourceId, selection: $selection) { rec in
+        @Bindable var bindable = appState
+        List(filtered, id: \.sourceId, selection: $bindable.selectedSourceId) { rec in
             HStack {
                 VStack(alignment: .leading) {
                     Text(rec.filename).font(.body)

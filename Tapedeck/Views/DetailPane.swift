@@ -6,12 +6,11 @@ import TapedeckCore
 
 struct DetailPane: View {
     @Environment(AppState.self) var appState
-    @State private var selectedSourceId: String?
     @State private var player: AVAudioPlayer?
     @State private var transcriptText: String = ""
 
     private var selected: Recording? {
-        guard let id = selectedSourceId else { return nil }
+        guard let id = appState.selectedSourceId else { return nil }
         return appState.recordings.first { $0.sourceId == id }
     }
 

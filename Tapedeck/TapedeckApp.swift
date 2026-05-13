@@ -39,6 +39,7 @@ struct TapedeckApp: App {
 
 struct MainView: View {
     @Environment(AppState.self) var appState
+    @State private var isSyncing = false
     var body: some View {
         NavigationSplitView {
             ProjectSidebar()
@@ -49,8 +50,20 @@ struct MainView: View {
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button("Sync now") {
-                    Task { try? await SyncCoordinator.shared.runOnce(reason: "ui_button") }
+                if isSyncing {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Syncing…").foregroundStyle(.secondary)
+                    }
+                } else {
+                    Button("Sync now") {
+                        isSyncing = true
+                        Task {
+                            _ = try? await SyncCoordinator.shared.runOnce(reason: "ui_button")
+                            try? await appState.refresh()
+                            isSyncing = false
+                        }
+                    }
                 }
             }
         }
