@@ -39,20 +39,41 @@ final class URLProtocolStub: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        let sessionId = request.value(forHTTPHeaderField: stubSessionHeader) ?? ""
+        let req = Self.requestWithDrainedBody(request)
+        let sessionId = req.value(forHTTPHeaderField: stubSessionHeader) ?? ""
         Self.lock.lock()
-        let match = Self.sessionHandlers[sessionId]?.first { $0.1(request) }
+        let match = Self.sessionHandlers[sessionId]?.first { $0.1(req) }
         Self.lock.unlock()
         guard let match else {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
         }
-        let (response, data) = match.2(request)
+        let (response, data) = match.2(req)
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
+
+    /// URLSession converts `URLRequest.httpBody` to `httpBodyStream` before
+    /// handing the request to a URLProtocol. Drain the stream back into
+    /// `httpBody` so handlers can inspect what was uploaded.
+    private static func requestWithDrainedBody(_ request: URLRequest) -> URLRequest {
+        guard request.httpBody == nil, let stream = request.httpBodyStream else { return request }
+        var copy = request
+        var collected = Data()
+        stream.open()
+        defer { stream.close() }
+        let bufSize = 64 * 1024
+        var buf = [UInt8](repeating: 0, count: bufSize)
+        while stream.hasBytesAvailable {
+            let n = stream.read(&buf, maxLength: bufSize)
+            if n <= 0 { break }
+            collected.append(buf, count: n)
+        }
+        copy.httpBody = collected
+        return copy
+    }
 }
 
 extension URLProtocolStub {

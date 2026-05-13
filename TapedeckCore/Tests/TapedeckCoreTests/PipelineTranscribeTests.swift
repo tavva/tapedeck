@@ -330,6 +330,60 @@ struct PipelineTranscribeTests {
         #expect(capture.value == "audio/mpeg")
     }
 
+    @Test func transcribeOne_stripsNonOpusStreams_beforeUpload() async throws {
+        let fx = try makeFixture()
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let dual = Self.makeDualStreamOgg()
+        _ = try insertDownloadedRecording(fx, ext: "ogg", audioBytes: dual)
+
+        final class BodyCapture: @unchecked Sendable {
+            private let lock = NSLock()
+            private var stored: Data?
+            var value: Data? { lock.lock(); defer { lock.unlock() }; return stored }
+            func set(_ v: Data?) { lock.lock(); stored = v; lock.unlock() }
+        }
+        let body = BodyCapture()
+        URLProtocolStub.register(sessionId: fx.sessionId, "deepgram-body", matching: { req in
+            req.url?.host == "api.deepgram.com"
+        }, handler: { req in
+            body.set(req.httpBody)
+            return URLProtocolStub.jsonResponse(for: req, fixture: "deepgram/short_recording.json")
+        })
+
+        try await makePipelineWith(fx).transcribeOne(sourceId: "rec-1")
+
+        let sent = try #require(body.value)
+        #expect(sent.count < dual.count)                                // smaller after stripping
+        #expect(sent.range(of: Data("PLAUD.AI".utf8)) == nil)           // metadata stream gone
+        #expect(sent.range(of: Data("OpusHead".utf8)) != nil)           // opus stream kept
+    }
+
+    /// Synthesise a dual-stream OGG: two pages with the Opus serial (one
+    /// OpusHead, one audio-payload) interleaved with a PLAUD.AI metadata page.
+    private static func makeDualStreamOgg() -> Data {
+        func page(serial: UInt32, sequence: UInt32, type: UInt8, payload: Data) -> Data {
+            var p = Data(count: 27 + 1 + payload.count)
+            p[0] = 0x4F; p[1] = 0x67; p[2] = 0x67; p[3] = 0x53
+            p[5] = type
+            for i in 0..<4 { p[14 + i] = UInt8((serial >> (8 * i)) & 0xFF) }
+            for i in 0..<4 { p[18 + i] = UInt8((sequence >> (8 * i)) & 0xFF) }
+            p[26] = 1
+            p[27] = UInt8(payload.count)
+            p.replaceSubrange(28..<28 + payload.count, with: payload)
+            let crc = OggRepacker.crc32(p)
+            for i in 0..<4 { p[22 + i] = UInt8((crc >> (8 * i)) & 0xFF) }
+            return p
+        }
+        let opusSerial: UInt32 = 1001
+        let plaudSerial: UInt32 = 1002
+        let opusHead = Data("OpusHead".utf8) + Data(repeating: 0, count: 11)
+        let plaud = Data("PLAUD.AI metadata".utf8) + Data(repeating: 0, count: 200)
+        let opusAudio = Data(repeating: 0xCD, count: 60)
+        return page(serial: opusSerial, sequence: 0, type: 0x02, payload: opusHead)
+             + page(serial: plaudSerial, sequence: 0, type: 0x02, payload: plaud)
+             + page(serial: opusSerial, sequence: 1, type: 0x00, payload: opusAudio)
+    }
+
     @Test func transcribePending_bypassesFailureGate() async throws {
         let fx = try makeFixture()
         defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
