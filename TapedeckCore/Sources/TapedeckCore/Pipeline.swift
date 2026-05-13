@@ -30,6 +30,12 @@ public actor Pipeline {
         case noActiveProjects
     }
 
+    public enum TranscribeError: Error, Equatable {
+        case unknownRecording(String)
+        case audioMissing(URL)
+        case providerFailed(String)
+    }
+
     let deps: Deps
     let recordings: RecordingRepository
     let projects: ProjectRepository
