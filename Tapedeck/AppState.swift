@@ -33,6 +33,7 @@ final class AppState {
     var statusCounts: StatusCounts { StatusCounts(recordings: recordings) }
     var selectedProject: String? = "all"
     var selectedSourceId: String? = nil
+    var busy: SyncCoordinator.Kind? = nil
 
     private let store: Store
     private let projectRepo: ProjectRepository
@@ -124,11 +125,41 @@ final class AppState {
             by: "user", at: Int64(Date().timeIntervalSince1970 * 1000),
             linkState: .pendingRelink)
         try await refresh()
-        Task.detached { try? await SyncCoordinator.shared.runOnce(reason: "manual_override") }
+        Task { await self.syncNow(reason: "manual_override") }
     }
 
     func retry(sourceId: String, stage: SyncStage) async throws {
         try recordingRepo.clearError(sourceId: sourceId, stage: stage)
         try await refresh()
+    }
+
+    func syncNow(reason: String) async {
+        await dispatch(.sync, reason: reason) { try await SyncCoordinator.shared.runOnce(reason: reason) }
+    }
+
+    func classifyPending(reason: String) async {
+        await dispatch(.classifyPending, reason: reason) {
+            try await SyncCoordinator.shared.classifyPending(reason: reason)
+        }
+    }
+
+    func classifyOne(sourceId: String, reason: String) async {
+        await dispatch(.classifySource(sourceId), reason: reason) {
+            try await SyncCoordinator.shared.classifyOne(sourceId: sourceId, reason: reason)
+        }
+    }
+
+    private func dispatch(_ kind: SyncCoordinator.Kind, reason: String,
+                          _ run: () async throws -> Int32) async {
+        busy = kind
+        defer { busy = nil }
+        do {
+            _ = try await run()
+        } catch SyncCoordinator.CoordinatorError.otherOperationRunning(let other) {
+            NSLog("SyncCoordinator: \(kind) requested while \(other) running")
+        } catch {
+            NSLog("SyncCoordinator \(kind) failed: \(error)")
+        }
+        try? await refresh()
     }
 }
