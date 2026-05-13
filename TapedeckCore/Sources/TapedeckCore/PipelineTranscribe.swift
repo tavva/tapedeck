@@ -69,10 +69,11 @@ extension Pipeline {
         guard FileManager.default.fileExists(atPath: audio.path) else {
             throw TranscribeError.audioMissing(audio)
         }
+        let contentType = audioContentType(forExtension: rec.audioExtension)
         let result: DeepgramClient.Result
         do {
             result = try await RetryPolicy.run { [deepgram = deps.deepgram] in
-                try await deepgram.transcribe(audioAt: audio, contentType: "audio/*")
+                try await deepgram.transcribe(audioAt: audio, contentType: contentType)
             }
         } catch {
             throw TranscribeError.providerFailed("\(error)")
@@ -87,5 +88,17 @@ extension Pipeline {
             try recordings.markPendingRelink(sourceId: rec.sourceId)
         }
         deps.logger.info("transcribe_ok", source: rec.sourceId)
+    }
+}
+
+private func audioContentType(forExtension ext: String?) -> String {
+    switch (ext ?? "").lowercased() {
+    case "mp3":                 return "audio/mpeg"
+    case "ogg", "opus", "oga":  return "audio/ogg"
+    case "wav":                 return "audio/wav"
+    case "m4a", "mp4", "aac":   return "audio/mp4"
+    case "flac":                return "audio/flac"
+    case "webm":                return "audio/webm"
+    default:                    return "application/octet-stream"
     }
 }
