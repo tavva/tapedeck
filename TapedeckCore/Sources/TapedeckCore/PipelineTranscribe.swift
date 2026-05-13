@@ -70,10 +70,12 @@ extension Pipeline {
             throw TranscribeError.audioMissing(audio)
         }
         let contentType = audioContentType(forExtension: rec.audioExtension)
+        let (uploadURL, tempURL) = try cleanedUploadURL(for: audio, ext: rec.audioExtension)
+        defer { if let t = tempURL { try? FileManager.default.removeItem(at: t) } }
         let result: DeepgramClient.Result
         do {
             result = try await RetryPolicy.run { [deepgram = deps.deepgram] in
-                try await deepgram.transcribe(audioAt: audio, contentType: contentType)
+                try await deepgram.transcribe(audioAt: uploadURL, contentType: contentType)
             }
         } catch {
             throw TranscribeError.providerFailed("\(error)")
@@ -89,6 +91,25 @@ extension Pipeline {
         }
         deps.logger.info("transcribe_ok", source: rec.sourceId)
     }
+}
+
+/// For multi-stream OGG files (Plaud devices interleave a PALUD.AI metadata
+/// bitstream alongside the Opus audio, which Deepgram rejects), returns a
+/// URL pointing at a temp-file copy with only the Opus pages. Returns the
+/// original URL when no cleaning is needed.
+private func cleanedUploadURL(for audio: URL, ext: String?) throws -> (URL, URL?) {
+    let lowered = (ext ?? "").lowercased()
+    guard lowered == "ogg" || lowered == "opus" || lowered == "oga" else {
+        return (audio, nil)
+    }
+    let bytes = try Data(contentsOf: audio)
+    guard let cleaned = OggRepacker.stripNonOpusStreams(bytes) else {
+        return (audio, nil)
+    }
+    let tmp = FileManager.default.temporaryDirectory
+        .appending(path: "tapedeck-ogg-\(UUID().uuidString).\(lowered)")
+    try cleaned.write(to: tmp)
+    return (tmp, tmp)
 }
 
 private func audioContentType(forExtension ext: String?) -> String {
