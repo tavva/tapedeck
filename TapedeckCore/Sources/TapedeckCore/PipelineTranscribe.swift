@@ -4,6 +4,10 @@ import Foundation
 
 extension Pipeline {
     func transcribeNew() async throws {
+        guard try autoTranscribeEnabled() else {
+            deps.logger.info("transcribe_skipped_auto_disabled", source: nil)
+            return
+        }
         let pending = ((try? recordings.recordingsNeedingTranscription()) ?? [])
             .filter { !shouldSkipAfterFailures(sourceId: $0.sourceId, stage: SyncStage.transcribe) }
         await withTaskGroup(of: Void.self) { group in
