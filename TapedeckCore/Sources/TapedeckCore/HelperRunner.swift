@@ -7,6 +7,8 @@ public enum HelperCommand: Equatable, Sendable {
     case fullCycle
     case classifyPending
     case classifySource(String)
+    case transcribePending
+    case transcribeSource(String)
 }
 
 public func parseHelperArguments(_ argv: [String]) -> HelperCommand {
@@ -17,6 +19,11 @@ public func parseHelperArguments(_ argv: [String]) -> HelperCommand {
             return .classifyPending
         case "--classify-source":
             if i + 1 < argv.count { return .classifySource(argv[i + 1]) }
+            return .fullCycle
+        case "--transcribe-pending":
+            return .transcribePending
+        case "--transcribe-source":
+            if i + 1 < argv.count { return .transcribeSource(argv[i + 1]) }
             return .fullCycle
         default:
             i += 1
@@ -65,6 +72,8 @@ public func runHelper(_ cmd: HelperCommand, deps: HelperDeps) async -> Int32 {
     case .fullCycle: return await runFullCycle(deps: deps)
     case .classifyPending: return await runClassifyPending(deps: deps)
     case .classifySource(let sid): return await runClassifySource(sid, deps: deps)
+    case .transcribePending: return 1  // wired in Task 9
+    case .transcribeSource: return 1   // wired in Task 10
     }
 }
 
