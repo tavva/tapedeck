@@ -17,16 +17,19 @@ struct ProjectSidebar: View {
                 Label("Unassigned", systemImage: "questionmark.diamond").tag("unassigned" as String?)
                 Label("Archived", systemImage: "archivebox").tag("archived" as String?)
             }
-            Section("Projects") {
+            Section {
                 ForEach(appState.projects, id: \.id) { project in
                     Label(project.displayName, systemImage: "folder").tag(project.id as String?)
                 }
-            }
-        }
-        .toolbar {
-            ToolbarItem {
-                Button(action: { showingNewProject = true }) {
-                    Image(systemName: "plus")
+            } header: {
+                HStack {
+                    Text("Projects")
+                    Spacer()
+                    Button(action: { showingNewProject = true }) {
+                        Image(systemName: "plus")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("New project")
                 }
             }
         }
