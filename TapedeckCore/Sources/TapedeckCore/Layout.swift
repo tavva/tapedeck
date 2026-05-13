@@ -37,6 +37,7 @@ public struct Layout: Sendable {
     public func dbURL() -> URL { supportRoot.appending(path: "state.db") }
     public func lockURL() -> URL { supportRoot.appending(path: "sync.lock") }
     public func logURL() -> URL { logsRoot.appending(path: "sync.log") }
+    public func devSecretsURL() -> URL { supportRoot.appending(path: "dev-secrets.json") }
 
     public func projectDir(slug: String) -> URL { userRoot.appending(path: "projects/\(slug)") }
 }

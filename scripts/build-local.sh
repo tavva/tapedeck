@@ -1,8 +1,8 @@
 #!/bin/bash
 # ABOUTME: Builds + ad-hoc-signs Tapedeck.app for local testing. No DMG, no notarisation.
 # ABOUTME: Skips keychain-access-groups entitlement (needs provisioning profile for that);
-# ABOUTME: KeychainStore detects the missing entitlement at runtime and uses the legacy
-# ABOUTME: file-based keychain — which same-user processes share automatically.
+# ABOUTME: KeychainStore detects the missing entitlement at runtime and stores secrets
+# ABOUTME: in a 0600 JSON file under Application Support — no keychain prompts.
 
 set -euo pipefail
 
@@ -44,5 +44,6 @@ echo "    Logs at:     tail -F ~/Library/Logs/Tapedeck/sync.log"
 echo "    State at:    ~/Library/Application\\ Support/Tapedeck/state.db"
 echo ""
 echo "Note: ad-hoc signing means keychain-access-groups is disabled — the UI and"
-echo "helper share secrets via the legacy login keychain instead. Release builds"
-echo "go through scripts/build-release.sh and use the data-protection keychain."
+echo "helper share secrets via ~/Library/Application Support/Tapedeck/dev-secrets.json"
+echo "(0600). Release builds go through scripts/build-release.sh and use the"
+echo "data-protection keychain."
