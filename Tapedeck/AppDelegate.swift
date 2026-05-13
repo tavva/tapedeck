@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in try? await appState.refresh(changedKey: key) }
         }
         LaunchAgent.installIfNeeded()
-        Task { try? await SyncCoordinator.shared.runOnce(reason: "app_launch") }
+        Task { await appState.syncNow(reason: "app_launch") }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
