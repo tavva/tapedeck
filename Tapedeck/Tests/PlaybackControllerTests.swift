@@ -37,6 +37,18 @@ final class PlaybackControllerTests: XCTestCase {
         XCTAssertGreaterThan(controller.duration, 0)
     }
 
+    func testLoadSameSourceIdIsIdempotent() {
+        let rec = Recording.test(sourceId: "src-1", audioURL: fixtureURL)
+        let controller = PlaybackController()
+        controller.load(rec)
+        controller.currentTime = 1.5
+
+        controller.load(rec)
+
+        XCTAssertEqual(controller.currentTime, 1.5, "Same-sourceId load must not reset position")
+        XCTAssertEqual(controller.currentRecording?.sourceId, "src-1")
+    }
+
     func testLoadMissingFileLeavesCurrentRecordingNil() {
         PlaybackController.audioURL = { _ in
             URL(fileURLWithPath: "/nonexistent/playback-test-missing.wav")
