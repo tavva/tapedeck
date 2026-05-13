@@ -56,6 +56,21 @@ struct MainView: View {
                         .foregroundStyle(.secondary)
                 }
                 ToolbarItem(placement: .primaryAction) {
+                    if appState.busy == .transcribePending {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Transcribing…").foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Button("Transcribe") {
+                            Task { await appState.transcribePending(reason: "ui_transcribe_pending") }
+                        }
+                        .disabled(appState.busy != nil
+                                  || appState.statusCounts.toTranscribe == 0)
+                        .help("\(appState.statusCounts.toTranscribe) recording\(appState.statusCounts.toTranscribe == 1 ? "" : "s") to transcribe")
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
                     if appState.busy == .classifyPending {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
