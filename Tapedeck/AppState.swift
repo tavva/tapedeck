@@ -6,6 +6,22 @@ import GRDB
 import Observation
 import TapedeckCore
 
+struct StatusCounts: Equatable {
+    var total: Int
+    var toTranscribe: Int
+    var toClassify: Int
+
+    init(recordings: [Recording]) {
+        total = recordings.count
+        toTranscribe = recordings.reduce(0) { acc, r in
+            acc + (r.audioDownloadedAt != nil && r.transcribedAt == nil ? 1 : 0)
+        }
+        toClassify = recordings.reduce(0) { acc, r in
+            acc + (r.transcribedAt != nil && r.classifiedAt == nil ? 1 : 0)
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class AppState {
@@ -14,6 +30,7 @@ final class AppState {
     var errors: [String: [SyncStage: StageError]] = [:]     // keyed by recording.sourceId
     var tokenStatus: String = "ok"
     var lastSyncAt: Int64? = nil
+    var statusCounts: StatusCounts { StatusCounts(recordings: recordings) }
     var selectedProject: String? = "all"
     var selectedSourceId: String? = nil
 
