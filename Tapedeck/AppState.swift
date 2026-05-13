@@ -149,6 +149,18 @@ final class AppState {
         }
     }
 
+    func transcribePending(reason: String) async {
+        await dispatch(.transcribePending, reason: reason) {
+            try await SyncCoordinator.shared.transcribePending(reason: reason)
+        }
+    }
+
+    func transcribeOne(sourceId: String, reason: String) async {
+        await dispatch(.transcribeSource(sourceId), reason: reason) {
+            try await SyncCoordinator.shared.transcribeOne(sourceId: sourceId, reason: reason)
+        }
+    }
+
     private func dispatch(_ kind: SyncCoordinator.Kind, reason: String,
                           _ run: () async throws -> Int32) async {
         busy = kind
