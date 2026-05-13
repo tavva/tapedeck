@@ -90,16 +90,26 @@ private func runFullCycle(deps: HelperDeps) async -> Int32 {
             deps.logger.error("token_missing", source: nil, message: "no JWT in keychain")
             return 2
         }
-        guard let deepgramKey = try deps.readSecret("tapedeck.deepgram.key", "default"),
-              let geminiKey = try deps.readSecret("tapedeck.gemini.key", "default") else {
-            deps.logger.error("api_key_missing", source: nil, message: "Deepgram or Gemini key missing")
+        let needsDeepgram = autoFlag(store: store, key: "auto_transcribe")
+        let needsGemini   = autoFlag(store: store, key: "auto_classify")
+        let deepgramKey   = try deps.readSecret("tapedeck.deepgram.key", "default")
+        let geminiKey     = try deps.readSecret("tapedeck.gemini.key", "default")
+
+        if needsDeepgram && deepgramKey == nil {
+            deps.logger.error("api_key_missing", source: nil,
+                              message: "Deepgram key missing (auto_transcribe on)")
+            return 3
+        }
+        if needsGemini && geminiKey == nil {
+            deps.logger.error("api_key_missing", source: nil,
+                              message: "Gemini key missing (auto_classify on)")
             return 3
         }
         let pipeline = Pipeline(deps: .init(
             store: store, layout: deps.layout,
             source: deps.makeSource(token),
-            deepgram: deps.makeDeepgram(deepgramKey),
-            gemini: deps.makeGemini(geminiKey),
+            deepgram: deps.makeDeepgram(deepgramKey ?? ""),
+            gemini:   deps.makeGemini(geminiKey ?? ""),
             logger: deps.logger, now: deps.now))
         try await pipeline.runCycle()
         deps.notify("last_sync_at")
@@ -233,6 +243,14 @@ private func buildTranscribePipeline(deps: HelperDeps, store: Store) throws -> P
         deepgram: deps.makeDeepgram(deepgramKey),
         gemini: deps.makeGemini(""),
         logger: deps.logger, now: deps.now))
+}
+
+private func autoFlag(store: Store, key: String) -> Bool {
+    let raw: String? = (try? store.read { db in
+        try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key = ?",
+                            arguments: [key])
+    }) ?? nil
+    return raw == "true"
 }
 
 private func writeTokenStatus(deps: HelperDeps, value: String) throws {
