@@ -242,6 +242,70 @@ struct HelperRunnerTests {
         #expect(status == 0)
     }
 
+    // MARK: full-cycle conditional key requirements
+
+    private func stubSourceEmptyList(_ fx: Fixture) {
+        URLProtocolStub.register(sessionId: fx.sessionId, "source-empty",
+                                 matching: { req in
+            req.url?.path.contains("/file/simple/web") == true
+        }, handler: { req in
+            let resp = HTTPURLResponse(url: req.url!, statusCode: 200,
+                                       httpVersion: "HTTP/1.1",
+                                       headerFields: ["Content-Type": "application/json"])!
+            return (resp, Data(#"{"data_file_list":[]}"#.utf8))
+        })
+    }
+
+    @Test func fullCycle_succeeds_withoutDeepgramOrGemini_whenAutoFlagsAreOff() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig"
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        stubSourceEmptyList(fx)
+
+        let status = await runHelper(.fullCycle, deps: fx.deps)
+        #expect(status == 0)
+    }
+
+    @Test func fullCycle_exitsThree_whenAutoTranscribeOnButDeepgramMissing() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig"
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        try fx.store.write { db in
+            try db.execute(sql: """
+                INSERT INTO app_state(key,value) VALUES('auto_transcribe','true')
+            """)
+        }
+
+        let status = await runHelper(.fullCycle, deps: fx.deps)
+        #expect(status == 3)
+        #expect(fx.log.all.contains {
+            $0.stage == "api_key_missing" && ($0.message ?? "").contains("Deepgram")
+        })
+    }
+
+    @Test func fullCycle_exitsThree_whenAutoClassifyOnButGeminiMissing() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.deepgram.key:default": "dg"
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        try fx.store.write { db in
+            try db.execute(sql: """
+                INSERT INTO app_state(key,value) VALUES
+                    ('auto_transcribe','true'),
+                    ('auto_classify','true')
+            """)
+        }
+
+        let status = await runHelper(.fullCycle, deps: fx.deps)
+        #expect(status == 3)
+        #expect(fx.log.all.contains {
+            $0.stage == "api_key_missing" && ($0.message ?? "").contains("Gemini")
+        })
+    }
+
     @Test func transcribeSource_refreshesProjectFolderCopy_forLinkedRecording() async throws {
         let fx = try await makeFixture(secrets: ["tapedeck.deepgram.key:default": "dg"])
         defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
