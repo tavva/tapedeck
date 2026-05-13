@@ -1,27 +1,72 @@
-// ABOUTME: Spawns TapedeckSyncHelper as a child process. One concurrent run at a time.
-// ABOUTME: Resolves via terminationHandler so the main actor never blocks on waitUntilExit.
+// ABOUTME: Spawns TapedeckSyncHelper as a child process. One concurrent operation at a time,
+// ABOUTME: scoped by operation Kind so the UI never silently aliases sync vs classify intents.
 
 import Foundation
 
 actor SyncCoordinator {
     static let shared = SyncCoordinator()
-    private var inflight: Task<Int32, Error>?
 
-    /// Spawns the helper if not already running; returns its termination status (0 on success).
+    enum Kind: Equatable, Sendable {
+        case sync
+        case classifyPending
+        case classifySource(String)
+
+        var helperArgs: [String] {
+            switch self {
+            case .sync: return []
+            case .classifyPending: return ["--classify-pending"]
+            case .classifySource(let id): return ["--classify-source", id]
+            }
+        }
+    }
+
+    enum CoordinatorError: Error, Equatable {
+        case otherOperationRunning(Kind)
+    }
+
+    typealias Spawner = @Sendable (Kind, String) async throws -> Int32
+
+    private var current: (kind: Kind, task: Task<Int32, Error>)?
+    private let spawner: Spawner
+
+    init(spawner: @escaping Spawner = SyncCoordinator.spawnHelper) {
+        self.spawner = spawner
+    }
+
     @discardableResult
     func runOnce(reason: String) async throws -> Int32 {
-        if let existing = inflight { return try await existing.value }
-        let task = Task { try await self.spawn(reason: reason) }
-        inflight = task
-        defer { inflight = nil }
+        try await dispatch(.sync, reason: reason)
+    }
+
+    @discardableResult
+    func classifyPending(reason: String) async throws -> Int32 {
+        try await dispatch(.classifyPending, reason: reason)
+    }
+
+    @discardableResult
+    func classifyOne(sourceId: String, reason: String) async throws -> Int32 {
+        try await dispatch(.classifySource(sourceId), reason: reason)
+    }
+
+    private func dispatch(_ kind: Kind, reason: String) async throws -> Int32 {
+        if let cur = current {
+            if cur.kind == kind { return try await cur.task.value }
+            throw CoordinatorError.otherOperationRunning(cur.kind)
+        }
+        let spawner = self.spawner
+        let task = Task { try await spawner(kind, reason) }
+        current = (kind, task)
+        defer { current = nil }
         return try await task.value
     }
 
-    private func spawn(reason: String) async throws -> Int32 {
+    @Sendable
+    private static func spawnHelper(kind: Kind, reason: String) async throws -> Int32 {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Int32, Error>) in
             let proc = Process()
             proc.executableURL = Bundle.main.bundleURL
                 .appending(path: "Contents/MacOS/TapedeckSyncHelper")
+            proc.arguments = kind.helperArgs
             proc.environment = ProcessInfo.processInfo.environment
                 .merging(["TAPEDECK_SYNC_REASON": reason]) { _, new in new }
             proc.terminationHandler = { p in
