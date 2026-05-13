@@ -99,4 +99,12 @@ public actor Pipeline {
         }
         return raw == "true"
     }
+
+    /// Reads `app_state.auto_transcribe`, defaulting to false when absent or non-`"true"`.
+    func autoTranscribeEnabled() throws -> Bool {
+        let raw: String? = try deps.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key = 'auto_transcribe'")
+        }
+        return raw == "true"
+    }
 }
