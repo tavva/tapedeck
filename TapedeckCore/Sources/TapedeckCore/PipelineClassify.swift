@@ -8,6 +8,10 @@ extension Pipeline {
             .filter { !shouldSkipAfterFailures(sourceId: $0.sourceId, stage: SyncStage.classify) }
         guard !pending.isEmpty else { return }
         let activeProjects = (try? projects.listActive()) ?? []
+        guard !activeProjects.isEmpty else {
+            deps.logger.info("classify_skipped_no_projects", source: nil)
+            return
+        }
         let hints = activeProjects.map {
             GeminiClient.ProjectHint(id: $0.id, name: $0.displayName, description: $0.description)
         }
