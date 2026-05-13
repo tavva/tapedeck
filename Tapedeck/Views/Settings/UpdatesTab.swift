@@ -8,15 +8,28 @@ struct UpdatesTab: View {
 
     var body: some View {
         Form {
-            Toggle("Automatically check for updates", isOn: $automaticallyChecks)
-                .onAppear {
-                    automaticallyChecks = updateManager.controller.updater.automaticallyChecksForUpdates
+            Section {
+                Toggle(isOn: $automaticallyChecks) {
+                    Text("Automatically check for updates")
+                    Text("Sparkle checks for new versions in the background.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .onChange(of: automaticallyChecks) { _, value in
-                    updateManager.controller.updater.automaticallyChecksForUpdates = value
+                HStack {
+                    Spacer()
+                    Button("Check for updates now") { updateManager.checkForUpdates() }
+                        .disabled(!updateManager.canCheckForUpdates)
                 }
-            Button("Check for updates now") { updateManager.checkForUpdates() }
-                .disabled(!updateManager.canCheckForUpdates)
+            } header: {
+                Text("Software updates")
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            automaticallyChecks = updateManager.controller.updater.automaticallyChecksForUpdates
+        }
+        .onChange(of: automaticallyChecks) { _, value in
+            updateManager.controller.updater.automaticallyChecksForUpdates = value
         }
     }
 }

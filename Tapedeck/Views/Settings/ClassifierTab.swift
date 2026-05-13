@@ -8,39 +8,77 @@ struct ClassifierTab: View {
     @State private var key: String = ""
     @State private var threshold: Double = 0.7
     @State private var saveState: SaveState = .idle
-    enum SaveState { case idle, saved, invalid }
+    enum SaveState { case idle, saved, testing, connected, invalid }
 
     var body: some View {
         Form {
-            Section("Gemini") {
-                SecureField("API key", text: $key)
-                    .onAppear {
-                        key = (try? KeychainStore.shared.get(
-                            service: "tapedeck.gemini.key", account: "default")) ?? ""
-                        threshold = readThreshold()
-                    }
+            Section {
+                LabeledContent("API key") {
+                    SecureField("", text: $key)
+                        .textFieldStyle(.roundedBorder)
+                }
                 HStack {
                     Button("Save") { saveKey() }
-                        .disabled(key.isEmpty)
+                        .disabled(key.isEmpty || saveState == .testing)
                     Button("Test connection") { Task { await testKey() } }
-                        .disabled(key.isEmpty)
+                        .disabled(key.isEmpty || saveState == .testing)
+                    Spacer()
                     statusLabel
                 }
+            } header: {
+                Text("Gemini")
+            } footer: {
+                Text("Used to classify each transcript into one of your projects.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            Section("Confidence threshold") {
-                Slider(value: $threshold, in: 0.5...0.95, step: 0.05) {
-                    Text("Threshold: \(threshold, format: .number.precision(.fractionLength(2)))")
+
+            Section {
+                LabeledContent {
+                    HStack {
+                        Slider(value: $threshold, in: 0.5...0.95, step: 0.05)
+                        Text(threshold, format: .number.precision(.fractionLength(2)))
+                            .monospacedDigit()
+                            .frame(width: 36, alignment: .trailing)
+                    }
+                } label: {
+                    Text("Confidence")
                 }
-                .onChange(of: threshold) { _, newValue in writeThreshold(newValue) }
+            } header: {
+                Text("Auto-assign threshold")
+            } footer: {
+                Text("Recordings below this confidence land in Unclassified for review.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
+        .formStyle(.grouped)
+        .onAppear {
+            key = (try? KeychainStore.shared.get(
+                service: "tapedeck.gemini.key", account: "default")) ?? ""
+            threshold = readThreshold()
+        }
+        .onChange(of: threshold) { _, newValue in writeThreshold(newValue) }
     }
 
     @ViewBuilder var statusLabel: some View {
         switch saveState {
-        case .idle:    EmptyView()
-        case .saved:   Label("Saved", systemImage: "checkmark.circle").foregroundStyle(.green)
-        case .invalid: Label("Key rejected", systemImage: "xmark.octagon").foregroundStyle(.red)
+        case .idle:
+            EmptyView()
+        case .saved:
+            Label("Saved", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .testing:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Testing…").foregroundStyle(.secondary)
+            }
+        case .connected:
+            Label("Connected", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .invalid:
+            Label("Key rejected", systemImage: "xmark.octagon.fill")
+                .foregroundStyle(.red)
         }
     }
 
@@ -50,14 +88,15 @@ struct ClassifierTab: View {
     }
 
     private func testKey() async {
+        saveState = .testing
         do {
             let c = GeminiClient(apiKey: key)
             _ = try await c.classify(transcript: "x", projects: [])
-            saveState = .saved
+            saveState = .connected
         } catch GeminiClient.GeminiError.invalidApiKey {
             saveState = .invalid
         } catch {
-            saveState = .saved
+            saveState = .connected
         }
     }
 

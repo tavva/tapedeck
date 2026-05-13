@@ -9,27 +9,67 @@ struct AccountTab: View {
 
     var body: some View {
         Form {
-            Section("Plaud") {
-                switch appState.tokenStatus {
-                case "ok":
-                    Label("Signed in", systemImage: "checkmark.seal")
-                    Button("Sign out") { try? signOut() }
-                case "expired":
-                    Label("Session expired — re-sign in", systemImage: "exclamationmark.triangle")
-                    Button("Re-sign in via web…") { openTokenWindow = true }
-                default:    // "missing"
-                    Label("Not signed in", systemImage: "key")
-                    Button("Sign in via web…") { openTokenWindow = true }
+            Section {
+                LabeledContent("Status") { statusLabel }
+                HStack {
+                    Spacer()
+                    actionButton
                 }
+            } header: {
+                Text("Plaud")
+            } footer: {
+                Text("Tapedeck uses your Plaud session token to fetch new recordings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            Section("Background sync") {
-                Toggle("Enable LaunchAgent", isOn: Binding(
-                    get: { FileManager.default.fileExists(atPath: LaunchAgent.plistURL.path) },
-                    set: { on in if on { LaunchAgent.installIfNeeded() } else { LaunchAgent.uninstall() } }
-                ))
+
+            Section {
+                Toggle(isOn: launchAgentBinding) {
+                    Text("Run Tapedeck Sync in the background")
+                    Text("Periodically pulls new recordings even when Tapedeck isn't open.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Background sync")
             }
         }
+        .formStyle(.grouped)
         .sheet(isPresented: $openTokenWindow) { TokenWindow() }
+    }
+
+    @ViewBuilder private var statusLabel: some View {
+        switch appState.tokenStatus {
+        case "ok":
+            Label("Signed in", systemImage: "checkmark.seal.fill")
+                .foregroundStyle(.green)
+        case "expired":
+            Label("Session expired", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        default:
+            Label("Not signed in", systemImage: "key")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private var actionButton: some View {
+        switch appState.tokenStatus {
+        case "ok":
+            Button("Sign out", role: .destructive) { try? signOut() }
+        case "expired":
+            Button("Re-sign in via web…") { openTokenWindow = true }
+                .buttonStyle(.borderedProminent)
+        default:
+            Button("Sign in via web…") { openTokenWindow = true }
+                .buttonStyle(.borderedProminent)
+        }
+    }
+
+    private var launchAgentBinding: Binding<Bool> {
+        Binding(
+            get: { FileManager.default.fileExists(atPath: LaunchAgent.plistURL.path) },
+            set: { on in if on { LaunchAgent.installIfNeeded() } else { LaunchAgent.uninstall() } }
+        )
     }
 
     private func signOut() throws {

@@ -81,6 +81,6 @@ struct SettingsView: View {
             ClassifierTab().tabItem { Label("Classifier", systemImage: "scope") }
             UpdatesTab().tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
         }
-        .frame(width: 480, height: 360)
+        .frame(width: 560, height: 440)
     }
 }
