@@ -2,9 +2,11 @@
 
 import SwiftUI
 import TapedeckCore
+import GRDB
 
 struct TranscriptionTab: View {
     @State private var key: String = ""
+    @State private var autoTranscribe: Bool = false
     @State private var saveState: SaveState = .idle
     enum SaveState { case idle, saved, testing, connected, invalid }
 
@@ -30,12 +32,22 @@ struct TranscriptionTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section {
+                Toggle("Transcribe new recordings automatically", isOn: $autoTranscribe)
+            } footer: {
+                Text("When off, recordings wait until you click Transcribe in the toolbar or on a recording. Each call to Deepgram costs money.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .onAppear {
             key = (try? KeychainStore.shared.get(
                 service: "tapedeck.deepgram.key", account: "default")) ?? ""
+            autoTranscribe = readAutoTranscribe()
         }
+        .onChange(of: autoTranscribe) { _, newValue in writeAutoTranscribe(newValue) }
     }
 
     @ViewBuilder var statusLabel: some View {
@@ -75,6 +87,24 @@ struct TranscriptionTab: View {
             saveState = .invalid
         } catch {
             saveState = .connected   // any non-auth error means the key was accepted
+        }
+    }
+
+    private func readAutoTranscribe() -> Bool {
+        guard let store = try? Store.open(at: Layout.standard.dbURL()) else { return false }
+        let raw: String? = (try? store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key = 'auto_transcribe'")
+        }) ?? nil
+        return raw == "true"
+    }
+
+    private func writeAutoTranscribe(_ value: Bool) {
+        guard let store = try? Store.open(at: Layout.standard.dbURL()) else { return }
+        try? store.write { db in
+            try db.execute(sql: """
+                INSERT INTO app_state(key,value) VALUES('auto_transcribe', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """, arguments: [value ? "true" : "false"])
         }
     }
 }
