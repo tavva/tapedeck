@@ -54,6 +54,12 @@ struct DetailPane: View {
                         appState.playback.togglePlayPause()
                     }
                     .disabled(rec.audioDownloadedAt == nil)
+                    Button(rec.transcribedAt == nil ? "Transcribe" : "Retranscribe") {
+                        Task { await appState.transcribeOne(sourceId: rec.sourceId,
+                                                            reason: "ui_transcribe_one") }
+                    }
+                    .disabled(appState.busy != nil
+                              || rec.audioDownloadedAt == nil)
                     Button(rec.classifiedAt == nil ? "Classify" : "Reclassify") {
                         Task { await appState.classifyOne(sourceId: rec.sourceId,
                                                           reason: "ui_classify_one") }
@@ -70,6 +76,7 @@ struct DetailPane: View {
         }
         .onAppear { loadTranscript(rec) }
         .onChange(of: rec.sourceId) { _, _ in loadTranscript(rec) }
+        .onChange(of: rec.transcribedAt) { _, _ in loadTranscript(rec) }
     }
 
     private func loadTranscript(_ rec: Recording) {
