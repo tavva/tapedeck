@@ -10,12 +10,16 @@ actor SyncCoordinator {
         case sync
         case classifyPending
         case classifySource(String)
+        case transcribePending
+        case transcribeSource(String)
 
         var helperArgs: [String] {
             switch self {
             case .sync: return []
             case .classifyPending: return ["--classify-pending"]
             case .classifySource(let id): return ["--classify-source", id]
+            case .transcribePending: return ["--transcribe-pending"]
+            case .transcribeSource(let id): return ["--transcribe-source", id]
             }
         }
     }
@@ -46,6 +50,16 @@ actor SyncCoordinator {
     @discardableResult
     func classifyOne(sourceId: String, reason: String) async throws -> Int32 {
         try await dispatch(.classifySource(sourceId), reason: reason)
+    }
+
+    @discardableResult
+    func transcribePending(reason: String) async throws -> Int32 {
+        try await dispatch(.transcribePending, reason: reason)
+    }
+
+    @discardableResult
+    func transcribeOne(sourceId: String, reason: String) async throws -> Int32 {
+        try await dispatch(.transcribeSource(sourceId), reason: reason)
     }
 
     private func dispatch(_ kind: Kind, reason: String) async throws -> Int32 {
