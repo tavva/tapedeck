@@ -52,6 +52,46 @@ final class PlaybackController: NSObject {
         isPlaying = false
     }
 
+    func togglePlayPause() {
+        guard let player else { return }
+        if isPlaying {
+            player.pause()
+            isPlaying = false
+            stopTickTimer()
+        } else {
+            player.play()
+            isPlaying = true
+            startTickTimer()
+        }
+    }
+
+    func seek(to time: TimeInterval) {
+        guard let player else { return }
+        let clamped = max(0, min(time, duration))
+        player.currentTime = clamped
+        currentTime = clamped
+    }
+
+    func stop() {
+        player?.stop()
+        player = nil
+        currentRecording = nil
+        isPlaying = false
+        currentTime = 0
+        duration = 0
+        stopTickTimer()
+    }
+
+    private func startTickTimer() {
+        stopTickTimer()
+        tickTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let player = self.player else { return }
+                self.currentTime = player.currentTime
+            }
+        }
+    }
+
     private func stopTickTimer() {
         tickTimer?.invalidate()
         tickTimer = nil

@@ -49,6 +49,46 @@ final class PlaybackControllerTests: XCTestCase {
         XCTAssertEqual(controller.currentRecording?.sourceId, "src-1")
     }
 
+    func testTogglePlayPauseFlipsState() {
+        let rec = Recording.test(sourceId: "src-1", audioURL: fixtureURL)
+        let controller = PlaybackController()
+        controller.load(rec)
+
+        XCTAssertFalse(controller.isPlaying)
+        controller.togglePlayPause()
+        XCTAssertTrue(controller.isPlaying)
+        controller.togglePlayPause()
+        XCTAssertFalse(controller.isPlaying)
+    }
+
+    func testSeekUpdatesCurrentTime() {
+        let rec = Recording.test(sourceId: "src-1", audioURL: fixtureURL)
+        let controller = PlaybackController()
+        controller.load(rec)
+
+        controller.seek(to: 0.05)
+        XCTAssertEqual(controller.currentTime, 0.05, accuracy: 0.01)
+    }
+
+    func testTogglePlayPauseWithoutLoadIsNoOp() {
+        let controller = PlaybackController()
+        controller.togglePlayPause()
+        XCTAssertFalse(controller.isPlaying)
+    }
+
+    func testStopClearsState() {
+        let rec = Recording.test(sourceId: "src-1", audioURL: fixtureURL)
+        let controller = PlaybackController()
+        controller.load(rec)
+        controller.togglePlayPause()
+
+        controller.stop()
+        XCTAssertNil(controller.currentRecording)
+        XCTAssertFalse(controller.isPlaying)
+        XCTAssertEqual(controller.currentTime, 0)
+        XCTAssertEqual(controller.duration, 0)
+    }
+
     func testLoadMissingFileLeavesCurrentRecordingNil() {
         PlaybackController.audioURL = { _ in
             URL(fileURLWithPath: "/nonexistent/playback-test-missing.wav")
