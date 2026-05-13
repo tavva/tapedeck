@@ -109,6 +109,45 @@ struct PipelineEndToEndTests {
         #expect(last == 999)
     }
 
+    @Test func classifySkippedWhenNoActiveProjects() async throws {
+        let layout = makeLayout()
+        let store = try Store.openInMemory()
+        let recordings = RecordingRepository(store: store)
+
+        let rec = Recording(sourceId: "rec-1", filename: "a.opus",
+                            startedAt: 1, durationMs: 1000, filesize: 8,
+                            audioExtension: "opus", lastSeenAt: 1)
+        try recordings.upsertFromRemote(rec)
+        try recordings.setDownloaded(sourceId: "rec-1", ext: "opus", at: 2)
+        try recordings.setTranscribed(sourceId: "rec-1", at: 3)
+
+        let (session, sid) = URLProtocolStub.makeSession()
+        defer { URLProtocolStub.clear(sessionId: sid) }
+        URLProtocolStub.register(sessionId: sid, "gemini-should-not-fire", matching: { req in
+            req.url?.host == "generativelanguage.googleapis.com"
+        }, handler: { req in
+            Issue.record("classify must not call Gemini when there are no active projects")
+            let resp = HTTPURLResponse(url: req.url!, statusCode: 500,
+                                       httpVersion: "HTTP/1.1", headerFields: nil)!
+            return (resp, Data())
+        })
+
+        let pipeline = Pipeline(deps: .init(
+            store: store, layout: layout,
+            source: SourceClient(token: "t.eyJzdWIiOiJ4In0.sig",
+                                 host: URL(string: "https://api-euc1.plaud.ai")!, session: session),
+            deepgram: DeepgramClient(apiKey: "dg", session: session),
+            gemini: GeminiClient(apiKey: "gm", session: session),
+            logger: DiscardingLog(),
+            now: { 10 }))
+
+        try await pipeline.classifyNew()
+
+        let stillPending = try recordings.recordingsNeedingClassification()
+        #expect(stillPending.count == 1)
+        #expect(try recordings.error(sourceId: "rec-1", stage: .classify) == nil)
+    }
+
     @Test func tokenExpiredFromAppStateAbortsBeforeNetwork() async throws {
         let layout = makeLayout()
         let store = try Store.openInMemory()
