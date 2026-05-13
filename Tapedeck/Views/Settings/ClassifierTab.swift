@@ -7,6 +7,7 @@ import GRDB
 struct ClassifierTab: View {
     @State private var key: String = ""
     @State private var threshold: Double = 0.7
+    @State private var autoClassify: Bool = false
     @State private var saveState: SaveState = .idle
     enum SaveState { case idle, saved, testing, connected, invalid }
 
@@ -51,14 +52,24 @@ struct ClassifierTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section {
+                Toggle("Classify new recordings automatically", isOn: $autoClassify)
+            } footer: {
+                Text("When off, transcripts wait until you click Classify in the toolbar or on a recording. Each call to Gemini costs money.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .onAppear {
             key = (try? KeychainStore.shared.get(
                 service: "tapedeck.gemini.key", account: "default")) ?? ""
             threshold = readThreshold()
+            autoClassify = readAutoClassify()
         }
         .onChange(of: threshold) { _, newValue in writeThreshold(newValue) }
+        .onChange(of: autoClassify) { _, newValue in writeAutoClassify(newValue) }
     }
 
     @ViewBuilder var statusLabel: some View {
@@ -115,6 +126,24 @@ struct ClassifierTab: View {
                 INSERT INTO app_state(key,value) VALUES('classifier_threshold', ?)
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """, arguments: [String(value)])
+        }
+    }
+
+    private func readAutoClassify() -> Bool {
+        guard let store = try? Store.open(at: Layout.standard.dbURL()) else { return false }
+        let raw: String? = (try? store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key = 'auto_classify'")
+        }) ?? nil
+        return raw == "true"
+    }
+
+    private func writeAutoClassify(_ value: Bool) {
+        guard let store = try? Store.open(at: Layout.standard.dbURL()) else { return }
+        try? store.write { db in
+            try db.execute(sql: """
+                INSERT INTO app_state(key,value) VALUES('auto_classify', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """, arguments: [value ? "true" : "false"])
         }
     }
 }

@@ -48,11 +48,20 @@ struct DetailPane: View {
                         Text(reasoning).font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                Button("▶ Play") {
-                    appState.playback.load(rec)
-                    appState.playback.togglePlayPause()
+                HStack(spacing: 8) {
+                    Button("▶ Play") {
+                        appState.playback.load(rec)
+                        appState.playback.togglePlayPause()
+                    }
+                    .disabled(rec.audioDownloadedAt == nil)
+                    Button(rec.classifiedAt == nil ? "Classify" : "Reclassify") {
+                        Task { await appState.classifyOne(sourceId: rec.sourceId,
+                                                          reason: "ui_classify_one") }
+                    }
+                    .disabled(appState.busy != nil
+                              || rec.transcribedAt == nil
+                              || appState.projects.isEmpty)
                 }
-                .disabled(rec.audioDownloadedAt == nil)
                 TextEditor(text: .constant(transcriptText))
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 220)
