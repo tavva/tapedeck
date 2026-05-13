@@ -15,6 +15,7 @@ final class AppState {
     var tokenStatus: String = "ok"
     var lastSyncAt: Int64? = nil
     var selectedProject: String? = "all"
+    var selectedSourceId: String? = nil
 
     private let store: Store
     private let projectRepo: ProjectRepository
