@@ -220,6 +220,71 @@ struct HelperRunnerTests {
         let recordings = RecordingRepository(store: fx.store)
         #expect(try recordings.recordingsNeedingTranscription().isEmpty)
     }
+
+    // MARK: transcribe-source
+
+    @Test func transcribeSource_returns1_andRecordsError_whenSourceIdUnknown() async throws {
+        let fx = try await makeFixture(secrets: ["tapedeck.deepgram.key:default": "dg"])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+
+        let status = await runHelper(.transcribeSource("missing"), deps: fx.deps)
+        #expect(status == 1)
+        #expect(fx.log.all.contains { $0.stage == "transcribe_source_failed" })
+    }
+
+    @Test func transcribeSource_returns0_onSuccess() async throws {
+        let fx = try await makeFixture(secrets: ["tapedeck.deepgram.key:default": "dg"])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let rec = try setupDownloadedRecording(fx)
+        stubDeepgramOK(fx)
+
+        let status = await runHelper(.transcribeSource(rec.sourceId), deps: fx.deps)
+        #expect(status == 0)
+    }
+
+    @Test func transcribeSource_refreshesProjectFolderCopy_forLinkedRecording() async throws {
+        let fx = try await makeFixture(secrets: ["tapedeck.deepgram.key:default": "dg"])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let rec = try setupDownloadedRecording(fx)
+        stubDeepgramOK(fx)
+        let recordings = RecordingRepository(store: fx.store)
+        let projects = ProjectRepository(store: fx.store)
+        try projects.insert(.init(id: "p", displayName: "P",
+                                  description: "P", createdAt: 1, archivedAt: nil))
+        try recordings.setClassification(sourceId: rec.sourceId, projectId: "p",
+                                         confidence: 0.9, reasoning: "r",
+                                         by: "test", at: 10, linkState: .pendingRelink)
+        // Seed the project folder with a stale copy so we can verify refresh.
+        let projectDir = fx.layout.projectDir(slug: "p")
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        let stem = fx.layout.stem(sourceId: rec.sourceId, title: rec.filename)
+        let projectTranscript = projectDir.appending(path: "\(stem).transcript.txt")
+        try "STALE".write(to: projectTranscript, atomically: true, encoding: .utf8)
+        // First call: relinks the recording into the project folder. After this
+        // the recording is `.linked` and the project folder has the freshly-
+        // stubbed transcript content.
+        let firstStatus = await runHelper(.transcribeSource(rec.sourceId), deps: fx.deps)
+        #expect(firstStatus == 0)
+        try "STALE-AGAIN".write(to: projectTranscript, atomically: true, encoding: .utf8)
+        // Second call: retranscribes; performTranscribeOne flips linkState back
+        // to pendingRelink (Task 6) and the helper's relinkChanged pass
+        // overwrites the stale project-folder copy.
+        let status = await runHelper(.transcribeSource(rec.sourceId), deps: fx.deps)
+        #expect(status == 0)
+
+        let updated = try #require(try recordings.find(sourceId: rec.sourceId))
+        #expect(updated.projectLinkState == .linked)
+        #expect(updated.linkedProjectId == "p")
+        // Project-folder copy should match the source-folder transcript that
+        // the retranscribe wrote — proving the relink pass picked up the
+        // refresh, not just that "STALE-AGAIN" got overwritten with anything.
+        let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
+        let sourceTranscript = fx.layout.audioDir(date: date)
+            .appending(path: "\(stem).transcript.txt")
+        let copyText = try String(contentsOf: projectTranscript, encoding: .utf8)
+        let sourceText = try String(contentsOf: sourceTranscript, encoding: .utf8)
+        #expect(copyText == sourceText)
+    }
 }
 
 // Helper for thread-safe in-memory secret lookups inside Sendable closures.
