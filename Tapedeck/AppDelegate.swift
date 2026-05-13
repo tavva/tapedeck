@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var notifierObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return }
         let appState = self.appState
         Task { try? await appState.refresh() }
         notifierObserver = AppStateNotifier.subscribe { key in
