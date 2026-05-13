@@ -5,7 +5,6 @@ import SwiftUI
 
 struct PlayerBar: View {
     @Environment(AppState.self) var appState
-    @State private var draggingTime: Double?
 
     var body: some View {
         if let rec = appState.playback.currentRecording {
@@ -25,7 +24,7 @@ struct PlayerBar: View {
                     .truncationMode(.middle)
                     .frame(maxWidth: 220, alignment: .leading)
 
-                Text(formatTime(draggingTime ?? appState.playback.currentTime))
+                Text(formatTime(appState.playback.currentTime))
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
@@ -33,16 +32,10 @@ struct PlayerBar: View {
 
                 Slider(
                     value: Binding(
-                        get: { draggingTime ?? appState.playback.currentTime },
-                        set: { draggingTime = $0 }
+                        get: { appState.playback.currentTime },
+                        set: { appState.playback.seek(to: $0) }
                     ),
-                    in: 0...max(appState.playback.duration, 0.01),
-                    onEditingChanged: { editing in
-                        if !editing, let t = draggingTime {
-                            appState.playback.seek(to: t)
-                            draggingTime = nil
-                        }
-                    }
+                    in: 0...max(appState.playback.duration, 0.01)
                 )
 
                 Text(formatTime(appState.playback.duration))
