@@ -31,6 +31,9 @@ final class PlaybackController: NSObject {
     }
 
     func load(_ rec: Recording) {
+        if currentRecording?.sourceId == rec.sourceId, player != nil {
+            return
+        }
         let url = Self.audioURL(rec)
         guard let newPlayer = try? AVAudioPlayer(contentsOf: url) else {
             currentRecording = nil
