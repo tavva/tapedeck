@@ -27,6 +27,10 @@ struct PipelineEndToEndTests {
         let projects = ProjectRepository(store: store)
         try projects.insert(.init(id: "homeschool-mvp", displayName: "Homeschool MVP",
                                   description: "Curriculum", createdAt: 1, archivedAt: nil))
+        // Classification is opt-in; enable it for the end-to-end happy path.
+        try store.write { db in
+            try db.execute(sql: "INSERT INTO app_state(key,value) VALUES('auto_classify', 'true')")
+        }
 
         let (session, sid) = URLProtocolStub.makeSession()
         defer { URLProtocolStub.clear(sessionId: sid) }
@@ -112,6 +116,11 @@ struct PipelineEndToEndTests {
     @Test func classifySkippedWhenNoActiveProjects() async throws {
         let layout = makeLayout()
         let store = try Store.openInMemory()
+        // auto_classify gate would otherwise short-circuit before we reach
+        // the no-projects guard we're trying to exercise here.
+        try store.write { db in
+            try db.execute(sql: "INSERT INTO app_state(key,value) VALUES('auto_classify', 'true')")
+        }
         let recordings = RecordingRepository(store: store)
 
         let rec = Recording(sourceId: "rec-1", filename: "a.opus",

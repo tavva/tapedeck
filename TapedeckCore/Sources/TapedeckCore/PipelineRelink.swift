@@ -3,7 +3,7 @@
 import Foundation
 
 extension Pipeline {
-    func relinkChanged() throws {
+    public func relinkChanged() throws {
         let pending = (try? recordings.recordingsNeedingRelink()) ?? []
         for rec in pending {
             do {
