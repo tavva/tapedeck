@@ -1,45 +1,98 @@
-// ABOUTME: WKWebView-based capture of the Plaud session JWT from web.plaud.ai localStorage.
-// ABOUTME: Polls localStorage every 1s; after 90s reveals a manual paste field.
+// ABOUTME: Sign-in helper. Opens Plaud in the user's default browser; user pastes the captured JWT here.
+// ABOUTME: Manual paste because Plaud's sign-in uses Google Identity Services, which refuses to run in WKWebView.
 
 import SwiftUI
-import WebKit
+import AppKit
 import TapedeckCore
 
 struct TokenWindow: View {
     @Environment(AppState.self) var appState
     @Environment(\.dismiss) var dismiss
-    @State private var showPaste = false
     @State private var pasted = ""
 
+    private static let plaudURL = URL(string: "https://web.plaud.ai/")!
+    private static let consoleSnippet = "localStorage.getItem('pld_tokenstr')"
+
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("Sign in to Plaud")
                 .font(.headline)
-            PlaudWebView { token in
-                save(token)
-            }
-            .frame(minWidth: 600, minHeight: 500)
-            .onAppear {
-                Task { try? await Task.sleep(nanoseconds: 90_000_000_000); showPaste = true }
-            }
-            if showPaste {
-                VStack(alignment: .leading) {
-                    Text("Or paste the JWT manually:").font(.caption)
-                    TextField("eyJhbGciOi…", text: $pasted)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Save pasted token") {
-                        save(pasted)
-                    }
-                    .disabled(pasted.isEmpty)
+
+            Text("Plaud's sign-in widget doesn't work inside the app. Sign in via your browser and paste the session token here.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            step(1) {
+                Button("Open Plaud in browser") {
+                    NSWorkspace.shared.open(Self.plaudURL)
                 }
-                .padding(.horizontal)
+                .buttonStyle(.borderedProminent)
+            }
+
+            step(2) {
+                Text("Sign in as usual.")
+                    .font(.callout)
+            }
+
+            step(3) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Open your browser's developer console and run:")
+                        .font(.callout)
+                    HStack(spacing: 6) {
+                        Text(Self.consoleSnippet)
+                            .font(.system(.callout, design: .monospaced))
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 8)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                        Button("Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(Self.consoleSnippet, forType: .string)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            }
+
+            step(4) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Paste the result (the long eyJ… string):")
+                        .font(.callout)
+                    TextField("eyJhbGciOi…", text: $pasted, axis: .vertical)
+                        .lineLimit(2...5)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Save token") { save(pasted) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        .padding()
+        .padding(20)
+        .frame(width: 520)
+    }
+
+    private func step<Content: View>(_ number: Int, @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text("\(number).")
+                .font(.callout.bold())
+                .foregroundStyle(.secondary)
+                .frame(width: 18, alignment: .trailing)
+            content()
+            Spacer(minLength: 0)
+        }
     }
 
     private func save(_ raw: String) {
-        let unquoted = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let unquoted = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
         let token = unquoted.hasPrefix("bearer ")
             ? String(unquoted.dropFirst("bearer ".count)) : unquoted
         try? KeychainStore.shared.set(
@@ -47,41 +100,5 @@ struct TokenWindow: View {
         try? appState.clearTokenStatus()
         AppStateNotifier.post(changedKey: "token_status")
         Task { try? await appState.refresh(); dismiss() }
-    }
-}
-
-private struct PlaudWebView: NSViewRepresentable {
-    let onCapture: (String) -> Void
-
-    func makeCoordinator() -> Coordinator { Coordinator(onCapture: onCapture) }
-
-    func makeNSView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent()
-        let view = WKWebView(frame: .zero, configuration: config)
-        view.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15"
-        view.navigationDelegate = context.coordinator
-        view.load(URLRequest(url: URL(string: "https://web.plaud.ai/")!))
-        context.coordinator.startPolling(view)
-        return view
-    }
-    func updateNSView(_ nsView: WKWebView, context: Context) {}
-
-    @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate {
-        let onCapture: (String) -> Void
-        var timer: Timer?
-        init(onCapture: @escaping (String) -> Void) { self.onCapture = onCapture }
-        func startPolling(_ view: WKWebView) {
-            timer?.invalidate()
-            timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak view, onCapture] _ in
-                guard let view else { return }
-                view.evaluateJavaScript("localStorage.getItem('pld_tokenstr')") { value, _ in
-                    if let raw = value as? String, !raw.isEmpty, raw != "null" {
-                        onCapture(raw)
-                    }
-                }
-            }
-        }
     }
 }

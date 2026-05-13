@@ -24,17 +24,24 @@ machine. Tapedeck owns `~/Tapedeck/` — assume nothing exists there yet.
 2. macOS will Gatekeeper-prompt the first time. Click **Open**.
 3. The main window appears empty.
 
-## Step 3 — Sign in via the cloud sign-in flow
+## Step 3 — Capture a Plaud session token
 
-1. Open **Settings → Account**.
-2. Click **Sign in via web…**. A web view opens at
+Plaud's login page uses Google Identity Services, which refuses to run
+inside an embedded webview. The app opens Plaud in your default browser
+and asks you to paste the session JWT back in.
+
+1. Open **Settings → Account** and click **Sign in via web…**.
+2. In the sheet, click **Open Plaud in browser**. Sign in as usual at
    <https://web.plaud.ai/>.
-3. Sign in normally. After ~1 second of being signed in, the window
-   self-dismisses — the JWT has been captured to the keychain.
-4. If 90 seconds pass with no capture, a paste field appears. In Safari,
-   open the JS console on web.plaud.ai and run
-   `localStorage.getItem('pld_tokenstr')`. Copy the value (including the
-   leading `bearer ` prefix), paste it in, click **Save pasted token**.
+3. Once signed in, open your browser's developer console
+   (Chrome/Edge/Arc: ⌥⌘J; Safari: enable the Develop menu in Settings →
+   Advanced, then ⌥⌘C) and run the snippet shown in the sheet:
+   ```js
+   localStorage.getItem('pld_tokenstr')
+   ```
+4. Copy the returned value (the long `eyJ…` string; the `bearer ` prefix
+   is fine to leave or strip — the app handles both) and paste it into
+   the **Paste the result** field. Click **Save token**.
 
 ## Step 4 — Enter API keys
 
