@@ -36,4 +36,15 @@ final class PlaybackControllerTests: XCTestCase {
         XCTAssertEqual(controller.currentRecording?.sourceId, "src-1")
         XCTAssertGreaterThan(controller.duration, 0)
     }
+
+    func testLoadMissingFileLeavesCurrentRecordingNil() {
+        PlaybackController.audioURL = { _ in
+            URL(fileURLWithPath: "/nonexistent/playback-test-missing.wav")
+        }
+        let rec = Recording.test(sourceId: "src-missing", audioURL: fixtureURL)
+        let controller = PlaybackController()
+        controller.load(rec)
+        XCTAssertNil(controller.currentRecording)
+        XCTAssertEqual(controller.duration, 0)
+    }
 }
