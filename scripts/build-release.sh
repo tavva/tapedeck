@@ -5,10 +5,10 @@
 set -euo pipefail
 
 VERSION="${1:?Usage: $0 <version> (e.g. 0.1.0)}"
+TEAM_ID="${TEAM_ID:?Set TEAM_ID env var to your Apple Developer Team ID (find it at developer.apple.com/account)}"
 
 PROJECT="Tapedeck.xcodeproj"
 SCHEME="Tapedeck"
-TEAM_ID="C8Q84FVJHL"
 BUILD_DIR="./build"
 ARCHIVE_PATH="$BUILD_DIR/Tapedeck.xcarchive"
 EXPORT_PATH="$BUILD_DIR/export"
@@ -54,10 +54,23 @@ xcodebuild -project "$PROJECT" \
 
 # Step 6: Export (signed, not yet notarised).
 echo "==> Exporting archive..."
+EXPORT_OPTIONS="$BUILD_DIR/ExportOptions.plist"
+cat > "$EXPORT_OPTIONS" << EXPORT_OPTIONS_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key><string>developer-id</string>
+  <key>signingStyle</key><string>manual</string>
+  <key>teamID</key><string>${TEAM_ID}</string>
+  <key>destination</key><string>export</string>
+</dict>
+</plist>
+EXPORT_OPTIONS_EOF
 xcodebuild -exportArchive \
   -archivePath "$ARCHIVE_PATH" \
   -exportPath "$EXPORT_PATH" \
-  -exportOptionsPlist ExportOptions.plist
+  -exportOptionsPlist "$EXPORT_OPTIONS"
 
 # Step 7: Verify keychain sharing BEFORE notarisation (because notarisation is
 # non-recoverable per Apple).

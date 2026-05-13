@@ -5,7 +5,7 @@ options:
   bundleIdPrefix: com.benphillips.tapedeck
 settings:
   SWIFT_VERSION: "6.0"
-  DEVELOPMENT_TEAM: "C8Q84FVJHL"
+  DEVELOPMENT_TEAM: "${TEAM_ID}"
   CODE_SIGN_STYLE: Manual
   CODE_SIGN_IDENTITY: "Developer ID Application"
   PROVISIONING_PROFILE_SPECIFIER: ""

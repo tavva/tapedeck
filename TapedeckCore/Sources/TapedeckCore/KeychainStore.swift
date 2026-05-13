@@ -5,15 +5,18 @@ import Foundation
 import Security
 
 public struct KeychainStore: Sendable {
-    /// Resolved access group (team-prefixed) — must match both binaries' entitlements verbatim.
-    public static let sharedAccessGroup = "C8Q84FVJHL.com.benphillips.tapedeck"
-
-    /// Production wiring used by both binaries. Probes once whether the data-protection
-    /// keychain is reachable with the team-prefixed access group; falls back to the
-    /// legacy file-based keychain (shared automatically between same-user processes)
-    /// if not — needed for ad-hoc-signed local builds that lack a provisioning profile.
+    /// Production wiring used by both binaries. Reads the team-prefixed access group
+    /// from the embedded `keychain-access-groups` entitlement at runtime — codesign
+    /// resolves `$(AppIdentifierPrefix)` to the actual team ID when signing, so the
+    /// same source builds under any Apple Developer team. Probes once whether the
+    /// data-protection keychain is reachable; falls back to the legacy file-based
+    /// keychain (shared automatically between same-user processes) for ad-hoc-signed
+    /// local builds and unsigned test processes that lack the entitlement.
     public static let shared: KeychainStore = {
-        let candidate = KeychainStore(accessGroup: sharedAccessGroup)
+        guard let accessGroup = resolveAccessGroupFromEntitlements() else {
+            return KeychainStore(accessGroup: nil)
+        }
+        let candidate = KeychainStore(accessGroup: accessGroup)
         let probeService = "tapedeck.entitlement.probe"
         do {
             _ = try candidate.get(service: probeService, account: "default")
@@ -24,6 +27,15 @@ public struct KeychainStore: Sendable {
             return candidate
         }
     }()
+
+    private static func resolveAccessGroupFromEntitlements() -> String? {
+        guard let task = SecTaskCreateFromSelf(nil) else { return nil }
+        guard let value = SecTaskCopyValueForEntitlement(task, "keychain-access-groups" as CFString, nil),
+              let groups = value as? [String] else {
+            return nil
+        }
+        return groups.first
+    }
 
     /// nil disables access-group scoping — only safe in unsigned test processes.
     public let accessGroup: String?
