@@ -54,6 +54,25 @@ final class SyncCoordinatorTests: XCTestCase {
         let total = await calls.value
         XCTAssertEqual(total, 2)
     }
+
+    func testTranscribePending_throws_whenSyncInFlight() async throws {
+        let gate = Gate()
+        let coord = SyncCoordinator(spawner: { kind, _ in
+            if kind == .sync { await gate.wait() }
+            return 0
+        })
+
+        async let _ = try? coord.runOnce(reason: "first")
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        do {
+            _ = try await coord.transcribePending(reason: "second")
+            XCTFail("expected otherOperationRunning")
+        } catch SyncCoordinator.CoordinatorError.otherOperationRunning(let kind) {
+            XCTAssertEqual(kind, .sync)
+        }
+        await gate.open()
+    }
 }
 
 private actor CallCounter {
