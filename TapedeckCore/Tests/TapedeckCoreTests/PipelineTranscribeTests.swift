@@ -133,20 +133,38 @@ struct PipelineTranscribeTests {
         })
     }
 
-    private func insertDownloadedRecording(_ fx: Fixture, audioBytes: Data? = Data([0,1,2,3])) throws -> Recording {
+    private func insertDownloadedRecording(_ fx: Fixture,
+                                           ext: String = "opus",
+                                           audioBytes: Data? = Data([0,1,2,3])) throws -> Recording {
         let r = Recording(sourceId: "rec-1", filename: "Meeting",
                           startedAt: 1, durationMs: 60_000, filesize: 4,
-                          audioExtension: "opus", lastSeenAt: 1)
+                          audioExtension: ext, lastSeenAt: 1)
         try fx.recordings.upsertFromRemote(r)
-        try fx.recordings.setDownloaded(sourceId: "rec-1", ext: "opus", at: 2)
+        try fx.recordings.setDownloaded(sourceId: "rec-1", ext: ext, at: 2)
         if let bytes = audioBytes {
             let date = Date(timeIntervalSince1970: TimeInterval(r.startedAt) / 1000)
             let dir = fx.layout.audioDir(date: date)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let stem = fx.layout.stem(sourceId: r.sourceId, title: r.filename)
-            try bytes.write(to: dir.appending(path: "\(stem).opus"))
+            try bytes.write(to: dir.appending(path: "\(stem).\(ext)"))
         }
         return r
+    }
+
+    private final class Captured: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: String?
+        var value: String? { lock.lock(); defer { lock.unlock() }; return stored }
+        func set(_ v: String?) { lock.lock(); stored = v; lock.unlock() }
+    }
+
+    private func stubDeepgramCapturingContentType(_ fx: Fixture, into capture: Captured) {
+        URLProtocolStub.register(sessionId: fx.sessionId, "deepgram-capture-ct", matching: { req in
+            req.url?.host == "api.deepgram.com"
+        }, handler: { req in
+            capture.set(req.value(forHTTPHeaderField: "Content-Type"))
+            return URLProtocolStub.jsonResponse(for: req, fixture: "deepgram/short_recording.json")
+        })
     }
 
     // MARK: transcribeOne(sourceId:) tests
@@ -286,6 +304,30 @@ struct PipelineTranscribeTests {
         try await makePipelineWith(fx).transcribePending()
 
         #expect(try fx.recordings.recordingsNeedingTranscription().isEmpty)
+    }
+
+    @Test func transcribeOne_sendsAudioOgg_forOggExtension() async throws {
+        let fx = try makeFixture()
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        _ = try insertDownloadedRecording(fx, ext: "ogg")
+        let capture = Captured()
+        stubDeepgramCapturingContentType(fx, into: capture)
+
+        try await makePipelineWith(fx).transcribeOne(sourceId: "rec-1")
+
+        #expect(capture.value == "audio/ogg")
+    }
+
+    @Test func transcribeOne_sendsAudioMpeg_forMp3Extension() async throws {
+        let fx = try makeFixture()
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        _ = try insertDownloadedRecording(fx, ext: "mp3")
+        let capture = Captured()
+        stubDeepgramCapturingContentType(fx, into: capture)
+
+        try await makePipelineWith(fx).transcribeOne(sourceId: "rec-1")
+
+        #expect(capture.value == "audio/mpeg")
     }
 
     @Test func transcribePending_bypassesFailureGate() async throws {
