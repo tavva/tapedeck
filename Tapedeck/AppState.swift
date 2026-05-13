@@ -21,6 +21,7 @@ final class AppState {
     private let projectRepo: ProjectRepository
     let recordingRepo: RecordingRepository
     private var timer: Timer?
+    let playback = PlaybackController()
 
     init() {
         self.store = try! Store.open(at: Layout.standard.dbURL())
