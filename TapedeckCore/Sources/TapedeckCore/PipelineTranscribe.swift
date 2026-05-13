@@ -69,6 +69,9 @@ extension Pipeline {
                       atomically: true, encoding: .utf8)
         try recordings.setTranscribed(sourceId: rec.sourceId, at: deps.now())
         try recordings.clearError(sourceId: rec.sourceId, stage: .transcribe)
+        if rec.linkedProjectId != nil {
+            try recordings.markPendingRelink(sourceId: rec.sourceId)
+        }
         deps.logger.info("transcribe_ok", source: rec.sourceId)
     }
 }
