@@ -53,4 +53,25 @@ struct RecordingRepositoryTests {
         try repo.clearError(sourceId: "abc", stage: .transcribe)
         #expect(try repo.error(sourceId: "abc", stage: .transcribe) == nil)
     }
+
+    @Test func markPendingRelink_flipsLinkedRowToPendingRelink() throws {
+        let store = try Store.openInMemory()
+        let projects = ProjectRepository(store: store)
+        try projects.insert(.init(id: "p", displayName: "P", description: "P",
+                                  createdAt: 1, archivedAt: nil))
+        let repo = RecordingRepository(store: store)
+        let rec = Recording(sourceId: "rec-1", filename: "M",
+                            startedAt: 1, durationMs: 1, filesize: 1,
+                            audioExtension: "opus", lastSeenAt: 1)
+        try repo.upsertFromRemote(rec)
+        try repo.setClassification(sourceId: "rec-1", projectId: "p",
+                                   confidence: 0.9, reasoning: "r", by: "test",
+                                   at: 10, linkState: .pendingRelink)
+        try repo.markLinked(sourceId: "rec-1", linkedProjectId: "p")
+        #expect(try #require(repo.find(sourceId: "rec-1")).projectLinkState == .linked)
+
+        try repo.markPendingRelink(sourceId: "rec-1")
+
+        #expect(try #require(repo.find(sourceId: "rec-1")).projectLinkState == .pendingRelink)
+    }
 }

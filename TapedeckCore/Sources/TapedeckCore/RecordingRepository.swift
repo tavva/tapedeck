@@ -105,6 +105,15 @@ public struct RecordingRepository: Sendable {
         }
     }
 
+    public func markPendingRelink(sourceId: String) throws {
+        try store.write { db in
+            try db.execute(sql: """
+                UPDATE recordings SET project_link_state = 'pending_relink'
+                WHERE source_id = ?
+            """, arguments: [sourceId])
+        }
+    }
+
     public func recordingsNeedingDownload() throws -> [Recording] { try fetchAll(where: "audio_downloaded_at IS NULL") }
     public func recordingsNeedingTranscription() throws -> [Recording] { try fetchAll(where: "audio_downloaded_at IS NOT NULL AND transcribed_at IS NULL") }
     public func recordingsNeedingClassification() throws -> [Recording] { try fetchAll(where: "transcribed_at IS NOT NULL AND classified_at IS NULL") }
