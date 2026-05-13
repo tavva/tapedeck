@@ -72,7 +72,7 @@ public func runHelper(_ cmd: HelperCommand, deps: HelperDeps) async -> Int32 {
     case .fullCycle: return await runFullCycle(deps: deps)
     case .classifyPending: return await runClassifyPending(deps: deps)
     case .classifySource(let sid): return await runClassifySource(sid, deps: deps)
-    case .transcribePending: return 1  // wired in Task 9
+    case .transcribePending: return await runTranscribePending(deps: deps)
     case .transcribeSource: return 1   // wired in Task 10
     }
 }
@@ -174,6 +174,42 @@ private func buildClassifyPipeline(deps: HelperDeps, store: Store) throws -> Pip
         source: deps.makeSource(""),
         deepgram: deps.makeDeepgram(""),
         gemini: deps.makeGemini(geminiKey),
+        logger: deps.logger, now: deps.now))
+}
+
+@MainActor
+private func runTranscribePending(deps: HelperDeps) async -> Int32 {
+    do {
+        let lock = try SyncLock(path: deps.layout.lockURL())
+        guard lock.tryAcquire() else {
+            deps.logger.info("transcribe_skipped_already_running", source: nil)
+            return 0
+        }
+        let store = try deps.openStore(deps.layout.dbURL())
+        guard let pipeline = try buildTranscribePipeline(deps: deps, store: store) else {
+            return 3
+        }
+        try await pipeline.transcribePending()
+        try await pipeline.relinkChanged()
+        deps.notify("recordings")
+        return 0
+    } catch {
+        deps.logger.error("transcribe_pending_failed", source: nil, message: "\(error)")
+        return 1
+    }
+}
+
+@MainActor
+private func buildTranscribePipeline(deps: HelperDeps, store: Store) throws -> Pipeline? {
+    guard let deepgramKey = try deps.readSecret("tapedeck.deepgram.key", "default") else {
+        deps.logger.error("api_key_missing", source: nil, message: "Deepgram key missing")
+        return nil
+    }
+    return Pipeline(deps: .init(
+        store: store, layout: deps.layout,
+        source: deps.makeSource(""),
+        deepgram: deps.makeDeepgram(deepgramKey),
+        gemini: deps.makeGemini(""),
         logger: deps.logger, now: deps.now))
 }
 

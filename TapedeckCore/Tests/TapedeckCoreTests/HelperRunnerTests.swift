@@ -173,6 +173,53 @@ struct HelperRunnerTests {
         let status = await runHelper(.classifySource(rec.sourceId), deps: fx.deps)
         #expect(status == 0)
     }
+
+    // MARK: transcribe-pending
+
+    private func stubDeepgramOK(_ fx: Fixture) {
+        URLProtocolStub.register(sessionId: fx.sessionId, "deepgram-ok", matching: { req in
+            req.url?.host == "api.deepgram.com"
+        }, handler: { req in
+            URLProtocolStub.jsonResponse(for: req, fixture: "deepgram/short_recording.json")
+        })
+    }
+
+    private func setupDownloadedRecording(_ fx: Fixture) throws -> Recording {
+        let recordings = RecordingRepository(store: fx.store)
+        let rec = Recording(sourceId: "rec-1", filename: "Meeting",
+                            startedAt: 1, durationMs: 60_000, filesize: 4,
+                            audioExtension: "opus", lastSeenAt: 1)
+        try recordings.upsertFromRemote(rec)
+        try recordings.setDownloaded(sourceId: "rec-1", ext: "opus", at: 2)
+        let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
+        let dir = fx.layout.audioDir(date: date)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let stem = fx.layout.stem(sourceId: rec.sourceId, title: rec.filename)
+        try Data([0,1,2,3]).write(to: dir.appending(path: "\(stem).opus"))
+        return rec
+    }
+
+    @Test func transcribePending_returns3_whenDeepgramKeyMissing() async throws {
+        let fx = try await makeFixture(secrets: [:])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        _ = try setupDownloadedRecording(fx)
+
+        let status = await runHelper(.transcribePending, deps: fx.deps)
+        #expect(status == 3)
+        #expect(fx.log.all.contains { $0.stage == "api_key_missing" })
+    }
+
+    @Test func transcribePending_returns0_andTranscribes_onSuccess() async throws {
+        let fx = try await makeFixture(secrets: ["tapedeck.deepgram.key:default": "dg"])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        _ = try setupDownloadedRecording(fx)
+        stubDeepgramOK(fx)
+
+        let status = await runHelper(.transcribePending, deps: fx.deps)
+        #expect(status == 0)
+        let recordings = RecordingRepository(store: fx.store)
+        #expect(try recordings.recordingsNeedingTranscription().isEmpty)
+    }
 }
 
 // Helper for thread-safe in-memory secret lookups inside Sendable closures.
