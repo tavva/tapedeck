@@ -39,7 +39,6 @@ struct TapedeckApp: App {
 
 struct MainView: View {
     @Environment(AppState.self) var appState
-    @State private var isSyncing = false
     var body: some View {
         VStack(spacing: 0) {
             NavigationSplitView {
@@ -57,20 +56,32 @@ struct MainView: View {
                         .foregroundStyle(.secondary)
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    if isSyncing {
+                    if appState.busy == .classifyPending {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Classifying…").foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Button("Classify") {
+                            Task { await appState.classifyPending(reason: "ui_classify_pending") }
+                        }
+                        .disabled(appState.busy != nil
+                                  || appState.statusCounts.toClassify == 0
+                                  || appState.projects.isEmpty)
+                        .help("\(appState.statusCounts.toClassify) recording\(appState.statusCounts.toClassify == 1 ? "" : "s") to classify")
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    if appState.busy == .sync {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
                             Text("Syncing…").foregroundStyle(.secondary)
                         }
                     } else {
                         Button("Sync now") {
-                            isSyncing = true
-                            Task {
-                                _ = try? await SyncCoordinator.shared.runOnce(reason: "ui_button")
-                                try? await appState.refresh()
-                                isSyncing = false
-                            }
+                            Task { await appState.syncNow(reason: "ui_sync_now") }
                         }
+                        .disabled(appState.busy != nil)
                     }
                 }
             }
