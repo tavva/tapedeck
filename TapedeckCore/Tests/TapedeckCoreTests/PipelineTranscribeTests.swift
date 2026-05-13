@@ -244,4 +244,35 @@ struct PipelineTranscribeTests {
         #expect(updated.transcribedAt != nil)
         #expect(try fx.recordings.error(sourceId: rec.sourceId, stage: .transcribe) == nil)
     }
+
+    @Test func transcribeOne_marksPendingRelink_whenAlreadyLinked() async throws {
+        let fx = try makeFixture()
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let projects = ProjectRepository(store: fx.store)
+        try projects.insert(.init(id: "p", displayName: "P", description: "P",
+                                  createdAt: 1, archivedAt: nil))
+        let rec = try insertDownloadedRecording(fx)
+        try fx.recordings.setClassification(sourceId: rec.sourceId, projectId: "p",
+                                            confidence: 0.9, reasoning: "r",
+                                            by: "test", at: 10, linkState: .pendingRelink)
+        try fx.recordings.markLinked(sourceId: rec.sourceId, linkedProjectId: "p")
+        stubDeepgramOK(fx)
+
+        try await makePipelineWith(fx).transcribeOne(sourceId: rec.sourceId)
+
+        let updated = try #require(try fx.recordings.find(sourceId: rec.sourceId))
+        #expect(updated.projectLinkState == .pendingRelink)
+    }
+
+    @Test func transcribeOne_leavesLinkStateUnchanged_whenNotLinked() async throws {
+        let fx = try makeFixture()
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let rec = try insertDownloadedRecording(fx)
+        stubDeepgramOK(fx)
+
+        try await makePipelineWith(fx).transcribeOne(sourceId: rec.sourceId)
+
+        let updated = try #require(try fx.recordings.find(sourceId: rec.sourceId))
+        #expect(updated.projectLinkState == .none)
+    }
 }
