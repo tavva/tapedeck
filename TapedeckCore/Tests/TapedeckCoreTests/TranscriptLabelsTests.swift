@@ -100,4 +100,23 @@ struct TranscriptLabelsTests {
         // Both paragraphs should be rewritten; the CRLF separator stays intact.
         #expect(result == "[Ben] hi\r\n\r\n[Ben] bye")
     }
+
+    @Test func validateSpeakerName_acceptsNormalNames() {
+        #expect(validateSpeakerName("Ben") == nil)
+        #expect(validateSpeakerName("Alice Smith") == nil)
+        #expect(validateSpeakerName("  Ben  ") == nil)
+        #expect(validateSpeakerName("speaker coach") == nil)
+    }
+
+    @Test func validateSpeakerName_rejectsEmpty() {
+        #expect(validateSpeakerName("") != nil)
+        #expect(validateSpeakerName("   ") != nil)
+        #expect(validateSpeakerName("\t\n") != nil)
+    }
+
+    @Test func validateSpeakerName_rejectsBracketAndNewline() {
+        #expect(validateSpeakerName("Ben]") != nil)
+        #expect(validateSpeakerName("[Ben") != nil)
+        #expect(validateSpeakerName("Ben\nSmith") != nil)
+    }
 }
