@@ -535,15 +535,17 @@ Append to `SpeakerRepositoryTests.swift`. A small helper inserts a recording so 
     }
 }
 
-private func insertRecording(store: Store, sourceId: String, projectId: String? = nil) throws {
-    if let pid = projectId {
-        try store.write { db in
-            try db.execute(sql: """
-                INSERT OR IGNORE INTO projects(id, display_name, description, created_at)
-                VALUES (?, ?, '', 0)
-            """, arguments: [pid, pid])
-        }
+private func insertProject(store: Store, projectId: String) throws {
+    try store.write { db in
+        try db.execute(sql: """
+            INSERT OR IGNORE INTO projects(id, display_name, description, created_at)
+            VALUES (?, ?, '', 0)
+        """, arguments: [projectId, projectId])
     }
+}
+
+private func insertRecording(store: Store, sourceId: String, projectId: String? = nil) throws {
+    if let pid = projectId { try insertProject(store: store, projectId: pid) }
     try store.write { db in
         try db.execute(sql: """
             INSERT INTO recordings(source_id, filename, started_at, duration_ms,
@@ -733,6 +735,9 @@ Insert before the file-scope helpers in `SpeakerRepositoryTests.swift`:
         let repo = SpeakerRepository(store: store)
         let recordings = RecordingRepository(store: store)
         try insertRecording(store: store, sourceId: "S1", projectId: "P1")
+        // P2 must exist before setClassification because of the
+        // recordings.project_id REFERENCES projects(id) foreign key.
+        try insertProject(store: store, projectId: "P2")
         try repo.syncUsage(sourceId: "S1", labels: ["Ben"])
 
         try recordings.setClassification(
