@@ -73,6 +73,39 @@ final class SyncCoordinatorTests: XCTestCase {
         }
         await gate.open()
     }
+
+    func testDispatchThrowsHelperBusy_whenSpawnerReturns75() async {
+        let coord = SyncCoordinator { _, _ in 75 }
+        do {
+            _ = try await coord.runOnce(reason: "test")
+            XCTFail("expected helperBusy throw")
+        } catch let SyncCoordinator.CoordinatorError.helperBusy(kind) {
+            XCTAssertEqual(kind, .sync)
+        } catch {
+            XCTFail("unexpected: \(error)")
+        }
+    }
+
+    func testConcurrentSameKind_bothObserveHelperBusy() async {
+        let coord = SyncCoordinator { _, _ in
+            try? await Task.sleep(for: .milliseconds(50))
+            return 75
+        }
+        async let a: Int32 = try coord.runOnce(reason: "a")
+        async let b: Int32 = try coord.runOnce(reason: "b")
+        var aBusy = false, bBusy = false
+        do { _ = try await a } catch SyncCoordinator.CoordinatorError.helperBusy { aBusy = true } catch { XCTFail("unexpected: \(error)") }
+        do { _ = try await b } catch SyncCoordinator.CoordinatorError.helperBusy { bBusy = true } catch { XCTFail("unexpected: \(error)") }
+        XCTAssertTrue(aBusy)
+        XCTAssertTrue(bBusy)
+    }
+
+    func testOperationRunnerConformance_forwardsToRunOnce() async throws {
+        let coord = SyncCoordinator { _, _ in 0 }
+        let runner: any OperationRunner = coord
+        let status = try await runner.run(.sync, reason: "test")
+        XCTAssertEqual(status, 0)
+    }
 }
 
 private actor CallCounter {
