@@ -6,14 +6,16 @@
 
 **Architecture:** Transcript file is the canonical store of names. New `speaker_usage` table powers a ranked dropdown via a join against `recordings` (project assignment is mutable). A `SpeakerEditor` view sits above the transcript in `DetailPane` and rewrites the `.transcript.txt` file atomically per rename. An `AppState` startup hook reconciles the table against existing transcripts so hand-edited names surface in the dropdown.
 
-**Tech Stack:** Swift 5.10, SwiftUI, GRDB.swift, Swift Testing (`@Suite` / `@Test`), Swift Package Manager (TapedeckCore), Xcode project (Tapedeck app).
+**Tech Stack:** Swift 6.0, SwiftUI, GRDB.swift, Swift Testing (`@Suite` / `@Test`), Swift Package Manager (TapedeckCore), Xcode project (Tapedeck app).
 
 **Design doc:** `docs/plans/2026-05-14-speaker-renaming-design.md`
 
 **Commands:**
 - Run TapedeckCore tests: `cd TapedeckCore && swift test`
 - Run a single test suite: `cd TapedeckCore && swift test --filter "<SuiteName>"`
-- Build the macOS app: `xcodebuild -project Tapedeck.xcodeproj -scheme Tapedeck -configuration Debug build`
+- Build the macOS app: `./scripts/build-local.sh` (regenerates `Tapedeck.xcodeproj` via `xcodegen` and ad-hoc-signs the bundle — the Xcode project is not checked in)
+
+Every build step in this plan uses `./scripts/build-local.sh`. Do not invoke `xcodebuild` directly: without the regenerated `.xcodeproj` it will fail with "project file not found".
 
 ---
 
@@ -31,7 +33,7 @@ Adds the `speaker_usage` table, bumps `TapedeckCore.schemaVersion`, and ensures 
 
 Edit `SmokeTests.swift:10` from `#expect(TapedeckCore.schemaVersion == 1)` to `#expect(TapedeckCore.schemaVersion == 2)`.
 
-Add a new test to `StoreOpenTests.swift` (preserves the existing `opensInMemoryAndRunsMigrations`):
+Add two new tests to `StoreOpenTests.swift` (preserves the existing `opensInMemoryAndRunsMigrations`):
 
 ```swift
 @Test func speakerUsageTableExists() throws {
@@ -44,7 +46,34 @@ Add a new test to `StoreOpenTests.swift` (preserves the existing `opensInMemoryA
     }
     #expect(count == 1)
 }
+
+@Test func v1DatabaseUpgradesToV2() throws {
+    let queue = try DatabaseQueue()
+    try Store.migrator.migrate(queue, upTo: "v1_initial")
+    // Force the DB into the historical v1 shape by overwriting the version row
+    // with the legacy value, the way an existing on-disk file from before this
+    // change would look.
+    try queue.write { db in
+        try db.execute(sql: "UPDATE app_state SET value = '1' WHERE key = 'schema_version'")
+    }
+
+    try Store.migrator.migrate(queue)
+
+    let version = try queue.read { db in
+        try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key = 'schema_version'")
+    }
+    let tableCount = try queue.read { db in
+        try Int.fetchOne(db, sql: """
+            SELECT COUNT(*) FROM sqlite_master
+            WHERE type = 'table' AND name = 'speaker_usage'
+        """)
+    }
+    #expect(version == "2")
+    #expect(tableCount == 1)
+}
 ```
+
+`Store.migrator` is declared `nonisolated(unsafe) static` in `Store.swift:36` so it's reachable from tests via `@testable import TapedeckCore`. If `migrate(upTo:)` is unavailable on the bundled GRDB version, fall back to running raw v1 SQL inline (the schema is small — see `Store.swift:38`). The shape of the test stays the same.
 
 **Step 2: Run tests to verify they fail**
 
@@ -94,7 +123,7 @@ The `UPDATE` covers v1 databases that were created before the new INSERT format.
 cd TapedeckCore && swift test --filter "Smoke|Store open"
 ```
 
-Expected: both tests pass.
+Expected: all three tests pass (`schemaVersionIsExposed`, `speakerUsageTableExists`, `v1DatabaseUpgradesToV2`).
 
 **Step 6: Commit**
 
@@ -887,30 +916,30 @@ git commit -m "feat(speakers): reconcileAll rebuilds rows from supplied transcri
 - Modify: `TapedeckCore/Sources/TapedeckCore/PipelineTranscribe.swift:87` (after `setTranscribed`)
 - Modify: `TapedeckCore/Tests/TapedeckCoreTests/PipelineTranscribeTests.swift`
 
-**Step 1: Read the existing test file for context**
+**Step 1: Write the failing test**
 
-Open `TapedeckCore/Tests/TapedeckCoreTests/PipelineTranscribeTests.swift` and find the test for the success path (around `transcribeSource_returns0_onSuccess` or `transcribeOne_throwsAndRecordsError_onProviderFailure`). Note the harness pattern for stubbing Deepgram and asserting DB state.
-
-**Step 2: Write the failing test**
-
-Append to `PipelineTranscribeTests.swift`, modelled on the closest existing success test:
+Append to `PipelineTranscribeTests.swift`, modelled on `transcribeOne_succeeds_writesTranscript_clearsError` (around line 215). It reuses the existing `makeFixture`, `insertDownloadedRecording`, `stubDeepgramOK`, and `makePipelineWith` helpers:
 
 ```swift
     @Test func transcribeOne_clearsSpeakerUsageRows() async throws {
-        // Build the same fixture used by the existing transcribe-success
-        // test, but additionally seed speaker_usage with stale rows for the
-        // recording. Confirm those rows are gone after transcribeOne returns.
-        //
-        // Use SpeakerRepository(store: env.store) to seed and assert.
-        // Pattern: env.recordings.upsertFromRemote(...) → env.speakers.syncUsage(...)
-        // → env.pipeline.transcribeOne(sourceId:) → SpeakerRepository(...)
-        //   .knownSpeakers(for: nil) is empty for that source.
+        let fx = try makeFixture()
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let rec = try insertDownloadedRecording(fx)
+        let speakers = SpeakerRepository(store: fx.store)
+        try speakers.syncUsage(sourceId: rec.sourceId, labels: ["Ben", "Alice"])
+        #expect(try !speakers.knownSpeakers(for: nil).isEmpty)
+        stubDeepgramOK(fx)
+
+        try await makePipelineWith(fx).transcribeOne(sourceId: rec.sourceId)
+
+        let names = try speakers.knownSpeakers(for: nil).map(\.name)
+        #expect(names.isEmpty)
     }
 ```
 
-Use the actual fixture helpers in this file — the harness builds the in-memory store, stub Deepgram client, and Pipeline. Mirror the existing call sites.
+The pre-call `#expect` confirms the seed actually inserted rows; the post-call assertion confirms `clearUsage` ran inside `performTranscribeOne`.
 
-**Step 3: Run test to verify it fails**
+**Step 2: Run test to verify it fails**
 
 ```bash
 cd TapedeckCore && swift test --filter "PipelineTranscribe"
@@ -918,7 +947,7 @@ cd TapedeckCore && swift test --filter "PipelineTranscribe"
 
 Expected: the new test fails (stale rows remain).
 
-**Step 4: Add the SpeakerRepository member to Pipeline**
+**Step 3: Add the SpeakerRepository member to Pipeline**
 
 Edit `Pipeline.swift`. Add next to `recordings` / `projects`:
 
@@ -932,7 +961,7 @@ And in `init`:
     self.speakers = SpeakerRepository(store: deps.store)
 ```
 
-**Step 5: Call clearUsage after setTranscribed**
+**Step 4: Call clearUsage after setTranscribed**
 
 Edit `PipelineTranscribe.swift:87`. Add immediately after `try recordings.setTranscribed(...)`:
 
@@ -940,7 +969,7 @@ Edit `PipelineTranscribe.swift:87`. Add immediately after `try recordings.setTra
         try speakers.clearUsage(sourceId: rec.sourceId)
 ```
 
-**Step 6: Run tests to verify they pass**
+**Step 5: Run tests to verify they pass**
 
 ```bash
 cd TapedeckCore && swift test --filter "PipelineTranscribe"
@@ -948,7 +977,7 @@ cd TapedeckCore && swift test --filter "PipelineTranscribe"
 
 Expected: all pass. Then run the full suite: `cd TapedeckCore && swift test`.
 
-**Step 7: Commit**
+**Step 6: Commit**
 
 ```bash
 git add TapedeckCore/Sources/TapedeckCore/Pipeline.swift \
@@ -961,38 +990,41 @@ git commit -m "feat(transcribe): clear speaker usage when transcript is rewritte
 
 ## Task 11: Reconcile speakers on app startup
 
-`AppState.init` opens the store and starts polling. After construction, `refresh()` runs against the loaded recordings; right after that we want to rebuild `speaker_usage` from every existing transcript so hand-edited names surface in the dropdown.
+`AppDelegate.applicationDidFinishLaunching` is the launch entry point. It already calls `Task { try? await appState.refresh() }` (`Tapedeck/AppDelegate.swift:16`). We add a new method on `AppState` and chain it after `refresh()` so it sees the loaded recordings list.
 
 **Files:**
 - Modify: `Tapedeck/AppState.swift`
+- Modify: `Tapedeck/AppDelegate.swift`
 
-**Step 1: Decide where to call from**
+**Step 1: Expose a SpeakerRepository on AppState**
 
-`AppState.init` is synchronous. The `TapedeckApp.swift` view chain calls `try? await appState.refresh()` once on launch. Add a sibling method `reconcileSpeakers()` and call it from the same `.task` entry point as `refresh()`. Read `Tapedeck/TapedeckApp.swift` first to find the existing call site for `refresh`.
-
-**Step 2: Add the method**
-
-Edit `AppState.swift`. Add a private `speakers: SpeakerRepository` set up in `init` next to `recordingRepo`:
+Edit `AppState.swift`. Add the property next to `recordingRepo` (line 40) and assign it in `init` next to `projectRepo`/`recordingRepo`:
 
 ```swift
     let speakers: SpeakerRepository
 ```
 
 ```swift
-    // in init, after projectRepo / recordingRepo:
+    // in init, after recordingRepo:
     self.speakers = SpeakerRepository(store: store)
 ```
 
-Add the method:
+It must be `let` (non-private) so `SpeakerEditor` and `DetailPane` in later tasks can read it via the injected `AppState`.
+
+**Step 2: Add reconcileSpeakers**
+
+In `AppState.swift`:
 
 ```swift
-    /// Rebuild `speaker_usage` from every transcript on disk so the dropdown
+    /// Rebuilds `speaker_usage` from every transcript on disk so the dropdown
     /// surfaces names from transcripts that have never been opened in the
-    /// new editor (or were hand-edited outside the app).
+    /// new editor (or were hand-edited outside the app). Call after the
+    /// initial `refresh()` so `self.recordings` is already populated.
     func reconcileSpeakers() async {
         let recordings = self.recordings
         let layout = Layout.standard
-        let tuples = await Task.detached(priority: .utility) { () -> [(sourceId: String, text: String)] in
+        let tuples = await Task.detached(priority: .utility) {
+            () -> [(sourceId: String, text: String)] in
             recordings.compactMap { rec -> (sourceId: String, text: String)? in
                 guard rec.transcribedAt != nil else { return nil }
                 let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
@@ -1007,45 +1039,55 @@ Add the method:
     }
 ```
 
-**Step 3: Invoke it from the startup `.task` block**
+**Step 3: Sequence the call in AppDelegate**
 
-In whichever view runs `try? await appState.refresh()` on launch (probably `TapedeckApp.swift` or `ContentView`), add:
+Edit `AppDelegate.swift:16`. Replace:
 
 ```swift
-    await appState.reconcileSpeakers()
+        Task { try? await appState.refresh() }
 ```
 
-after `refresh()` so it sees the loaded recordings list.
+with:
+
+```swift
+        Task {
+            try? await appState.refresh()
+            await appState.reconcileSpeakers()
+        }
+```
+
+Reconcile must run *after* `refresh()` because it iterates `appState.recordings`. Keep the existing `LaunchAgent.installIfNeeded()` and `Task { await appState.syncNow(...) }` lines unchanged — `syncNow` is independent and can race with reconcile harmlessly.
 
 **Step 4: Build the app**
 
-There is no automated UI test for this path. Verify the build:
-
 ```bash
-xcodebuild -project Tapedeck.xcodeproj -scheme Tapedeck -configuration Debug build 2>&1 | tail -20
+./scripts/build-local.sh 2>&1 | tail -10
 ```
 
-Expected: `BUILD SUCCEEDED`.
+Expected: `==> Built ./build/local/Tapedeck.app`.
 
 **Step 5: Manual smoke test**
 
-Launch the app once. Confirm no crash and that startup logs (Console.app, filter "Tapedeck") show no errors. Check the DB:
+Launch the app:
 
 ```bash
-sqlite3 ~/Library/Application\ Support/Tapedeck/state.db \
-  "SELECT COUNT(*) FROM speaker_usage"
+open ./build/local/Tapedeck.app
 ```
 
-If you have transcripts with custom names, the count should be > 0. If you've never renamed any speakers it's fine for it to be 0.
+Confirm no crash and that startup logs (`tail -F ~/Library/Logs/Tapedeck/sync.log`) show no reconcile-related errors. Check the DB:
+
+```bash
+sqlite3 ~/Library/Application\ Support/Tapedeck/state.db "SELECT COUNT(*) FROM speaker_usage"
+```
+
+If you have transcripts with hand-edited names, the count should be > 0. If every transcript still has Deepgram defaults, 0 is the correct result (defaults are filtered out).
 
 **Step 6: Commit**
 
 ```bash
-git add Tapedeck/AppState.swift Tapedeck/TapedeckApp.swift
+git add Tapedeck/AppState.swift Tapedeck/AppDelegate.swift
 git commit -m "feat(appstate): reconcile speaker_usage from transcripts on launch"
 ```
-
-(Replace `TapedeckApp.swift` with whichever view actually got the `await` call.)
 
 ---
 
@@ -1096,10 +1138,10 @@ struct SpeakerEditor: View {
 **Step 2: Build to confirm it compiles**
 
 ```bash
-xcodebuild -project Tapedeck.xcodeproj -scheme Tapedeck -configuration Debug build 2>&1 | tail -5
+./scripts/build-local.sh 2>&1 | tail -5
 ```
 
-Expected: `BUILD SUCCEEDED`.
+Expected: `==> Built ./build/local/Tapedeck.app`.
 
 **Step 3: Commit**
 
@@ -1110,9 +1152,9 @@ git commit -m "feat(ui): SpeakerEditor skeleton renders parsed labels"
 
 ---
 
-## Task 13: SpeakerEditor combo box with project-aware dropdown
+## Task 13: SpeakerEditor combo box with project-aware filtered dropdown
 
-Each row gets an editable text field with a dropdown of known speakers. Project entries (`inCurrentProject == true`) appear at the top, separated from the rest by a divider.
+Each row gets an editable text field with a dropdown of known speakers. Project entries (`inCurrentProject == true`) appear at the top, separated from the rest by a divider. The dropdown is filtered live by the text field value (case-insensitive prefix match). The dropdown reloads when the recording, its project, or the parsed labels change.
 
 **Files:**
 - Modify: `Tapedeck/Views/SpeakerEditor.swift`
@@ -1146,12 +1188,24 @@ struct SpeakerEditor: View {
             }
             .padding(8)
             .background(RoundedRectangle(cornerRadius: 6).fill(.background.secondary))
-            .task(id: sourceId) { reload() }
+            // Reload when the recording changes, when its project changes,
+            // or when the parsed-label set changes (after a rename).
+            .task(id: ReloadKey(sourceId: sourceId, projectId: projectId,
+                                 labels: labels)) {
+                reload()
+            }
         }
+    }
+
+    private struct ReloadKey: Equatable {
+        let sourceId: String
+        let projectId: String?
+        let labels: [String]
     }
 
     @ViewBuilder
     private func row(for label: String) -> some View {
+        let typed = editText[label] ?? label
         HStack(spacing: 8) {
             Text("[\(label)]")
                 .font(.system(.body, design: .monospaced))
@@ -1161,8 +1215,9 @@ struct SpeakerEditor: View {
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 260)
             Menu("▼") {
-                let inProject = known.filter(\.inCurrentProject)
-                let others = known.filter { !$0.inCurrentProject }
+                let filtered = filteredKnown(matching: typed)
+                let inProject = filtered.filter(\.inCurrentProject)
+                let others = filtered.filter { !$0.inCurrentProject }
                 if !inProject.isEmpty {
                     Section("This project") {
                         ForEach(inProject, id: \.name) { s in
@@ -1177,8 +1232,9 @@ struct SpeakerEditor: View {
                         }
                     }
                 }
-                if known.isEmpty {
-                    Text("No saved speakers yet").disabled(true)
+                if filtered.isEmpty {
+                    Text(known.isEmpty ? "No saved speakers yet"
+                                       : "No matches").disabled(true)
                 }
             }
             .menuStyle(.borderlessButton)
@@ -1193,58 +1249,95 @@ struct SpeakerEditor: View {
         )
     }
 
-    private func reload() {
+    /// Case-insensitive prefix match. When the field still holds the original
+    /// `[speaker N]` label (untouched), return the full list so the user sees
+    /// every option in their first interaction.
+    private func filteredKnown(matching typed: String) -> [KnownSpeaker] {
+        let trimmed = typed.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty || labels.contains(trimmed) { return known }
+        let lower = trimmed.lowercased()
+        return known.filter { $0.name.lowercased().hasPrefix(lower) }
+    }
+
+    func reload() {
         known = (try? appState.speakers.knownSpeakers(for: projectId)) ?? []
     }
 }
 ```
 
+`ReloadKey` makes `.task(id:)` fire whenever any of the three inputs change — covering project reassignment, transcript rewrites, and recording selection.
+
 **Step 2: Build to confirm it compiles**
 
 ```bash
-xcodebuild -project Tapedeck.xcodeproj -scheme Tapedeck -configuration Debug build 2>&1 | tail -5
+./scripts/build-local.sh 2>&1 | tail -5
 ```
 
-Expected: `BUILD SUCCEEDED`. If `appState.speakers` is not visible from the view (the property was internal in Task 11 — confirm), promote the property to `internal` if it isn't already.
+Expected: `==> Built ./build/local/Tapedeck.app`. If the build complains about `appState.speakers` accessibility, double-check Task 11 step 1 made it `let speakers: SpeakerRepository` (internal), not `private let`.
 
 **Step 3: Commit**
 
 ```bash
 git add Tapedeck/Views/SpeakerEditor.swift
-git commit -m "feat(ui): SpeakerEditor combo with project-aware dropdown"
+git commit -m "feat(ui): SpeakerEditor combo with filtered project-aware dropdown"
 ```
 
 ---
 
-## Task 14: SpeakerEditor apply flow with validation
+## Task 14: SpeakerEditor apply flow with validation, Return-to-submit, live error
 
-Apply rewrites the transcript file and calls `syncUsage`. Validates the new name. No merge confirmation yet — that's the next task.
+Apply rewrites the transcript file and calls `syncUsage`. Validates the new name as the user types and surfaces the error inline. Pressing Return inside the text field is equivalent to clicking Apply. No merge confirmation yet — that's the next task.
 
 **Files:**
 - Modify: `Tapedeck/Views/SpeakerEditor.swift`
 
-**Step 1: Add the Apply button and validation**
+**Step 1: Add the Apply button, validation, Return-to-submit, and live error**
 
-Append the Apply column to the row HStack (before the Menu):
+Restructure the row body so each row is wrapped in a `VStack` (text field + inline error). Append the Apply column inside the inner `HStack`, before the Menu:
 
 ```swift
-            Button("Apply") {
-                Task { await applyRename(label: label) }
+    @ViewBuilder
+    private func row(for label: String) -> some View {
+        let typed = editText[label] ?? label
+        let validationError = validate((editText[label] ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
+        let candidateChanged = typed.trimmingCharacters(in: .whitespacesAndNewlines) != label
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Text("[\(label)]")
+                    .font(.system(.body, design: .monospaced))
+                    .frame(width: 110, alignment: .leading)
+                Text("→").foregroundStyle(.secondary)
+                TextField("name", text: binding(for: label))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 260)
+                    .onSubmit { Task { await applyRename(label: label) } }
+                Button("Apply") {
+                    Task { await applyRename(label: label) }
+                }
+                .disabled(!candidateChanged || validationError != nil)
+                Menu("▼") {
+                    // ...unchanged Menu body from Task 13...
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 30)
             }
-            .disabled(!canApply(label: label))
+            // Live error: only surface once the user has typed something that
+            // diverges from the original label and is invalid.
+            if candidateChanged, let err = validationError {
+                Text(err).font(.caption).foregroundStyle(.red)
+                    .padding(.leading, 118)
+            }
+        }
+    }
 ```
+
+Keep the existing Menu body from Task 13 in place where the comment indicates — only the surrounding row layout changes.
 
 Add helpers inside `SpeakerEditor`:
 
 ```swift
-    @State private var rowError: [String: String] = [:]
-
-    private func canApply(label: String) -> Bool {
-        let candidate = (editText[label] ?? label).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !candidate.isEmpty, candidate != label else { return false }
-        return validate(candidate) == nil
-    }
-
+    /// Returns the validation error for a candidate name, or nil if valid.
+    /// Used both to gate the Apply button and to render the inline error.
     private func validate(_ name: String) -> String? {
         if name.isEmpty { return "Name cannot be empty" }
         if name.contains("[") || name.contains("]") || name.contains("\n") {
@@ -1255,36 +1348,29 @@ Add helpers inside `SpeakerEditor`:
 
     private func applyRename(label: String) async {
         let candidate = (editText[label] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if let err = validate(candidate) { rowError[label] = err; return }
-        rowError[label] = nil
+        guard candidate != label else { return }
+        guard validate(candidate) == nil else { return }
         await onApply(label, candidate)
-        // editText is cleared by parent on transcript reload (new label set)
+        // editText is cleared by DetailPane re-reading the transcript, which
+        // changes the parsed `labels` set and re-renders this view.
     }
 ```
 
-Show an inline error under the row when present:
+Validation is recomputed on every render — no separate `rowError` state needed. SwiftUI re-evaluates `row(for:)` whenever `editText` changes (the field is bound to it), so the inline error tracks the user's typing live.
 
-```swift
-            if let err = rowError[label] {
-                Text(err).font(.caption).foregroundStyle(.red)
-            }
-```
-
-**Step 2: Wire onApply in DetailPane (preview only — full wiring lands in Task 16)**
-
-For now, build the file in isolation:
+**Step 2: Build**
 
 ```bash
-xcodebuild -project Tapedeck.xcodeproj -scheme Tapedeck -configuration Debug build 2>&1 | tail -5
+./scripts/build-local.sh 2>&1 | tail -5
 ```
 
-Expected: `BUILD SUCCEEDED` (or unresolved-symbol on `appState.speakers` if missing — fix as needed).
+Expected: `==> Built ./build/local/Tapedeck.app`.
 
 **Step 3: Commit**
 
 ```bash
 git add Tapedeck/Views/SpeakerEditor.swift
-git commit -m "feat(ui): SpeakerEditor apply with validation"
+git commit -m "feat(ui): SpeakerEditor apply with live validation and Return-to-submit"
 ```
 
 ---
@@ -1296,19 +1382,31 @@ When the user types a name that already exists as a label in this transcript, sh
 **Files:**
 - Modify: `Tapedeck/Views/SpeakerEditor.swift`
 
-**Step 1: Add the alert state and intercept apply**
+**Step 1: Add the pending-merge state**
+
+Add inside `SpeakerEditor`:
 
 ```swift
-    @State private var pendingMerge: (oldLabel: String, newLabel: String)? = nil
+    @State private var pendingMerge: PendingMerge? = nil
+
+    private struct PendingMerge: Equatable {
+        let oldLabel: String
+        let newLabel: String
+    }
 ```
 
-Wrap the body with an `.alert`:
+**Step 2: Attach the alert modifier after the existing `.task(id:)`**
+
+Keep the existing `.task(id: ReloadKey(...))` from Task 13 unchanged — do not replace it. Append `.alert(...)` immediately after it:
 
 ```swift
             }
             .padding(8)
             .background(RoundedRectangle(cornerRadius: 6).fill(.background.secondary))
-            .task(id: sourceId) { reload() }
+            .task(id: ReloadKey(sourceId: sourceId, projectId: projectId,
+                                 labels: labels)) {
+                reload()
+            }
             .alert("Merge speakers?",
                    isPresented: Binding(
                        get: { pendingMerge != nil },
@@ -1328,30 +1426,34 @@ Wrap the body with an `.alert`:
             }
 ```
 
-Update `applyRename` to set `pendingMerge` when the target already exists:
+**Step 3: Add the merge intercept to `applyRename`**
+
+Edit the `applyRename` body added in Task 14 — keep its existing guards (no `rowError`, validation via the live `validate` helper) and only insert the merge check between validation and the `onApply` call:
 
 ```swift
     private func applyRename(label: String) async {
         let candidate = (editText[label] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if let err = validate(candidate) { rowError[label] = err; return }
-        rowError[label] = nil
-        if labels.contains(candidate) && candidate != label {
-            pendingMerge = (oldLabel: label, newLabel: candidate)
+        guard candidate != label else { return }
+        guard validate(candidate) == nil else { return }
+        if labels.contains(candidate) {
+            pendingMerge = PendingMerge(oldLabel: label, newLabel: candidate)
             return
         }
         await onApply(label, candidate)
     }
 ```
 
-**Step 2: Build**
+The merge confirmation only fires when the user actively types an existing label *and* presses Return / Apply. The inline validation error from Task 14 still gates ill-formed names before they reach this point.
+
+**Step 4: Build**
 
 ```bash
-xcodebuild -project Tapedeck.xcodeproj -scheme Tapedeck -configuration Debug build 2>&1 | tail -5
+./scripts/build-local.sh 2>&1 | tail -5
 ```
 
-Expected: `BUILD SUCCEEDED`.
+Expected: `==> Built ./build/local/Tapedeck.app`.
 
-**Step 3: Commit**
+**Step 5: Commit**
 
 ```bash
 git add Tapedeck/Views/SpeakerEditor.swift
@@ -1365,9 +1467,11 @@ git commit -m "feat(ui): confirm merge when renamed speaker already exists"
 Wire `SpeakerEditor` into `DetailPane`. The `onApply` closure:
 1. Reads the current transcript from disk.
 2. Computes the new text via `renameLabel`.
-3. Atomically writes back via `FileManager.replaceItemAt` (or `String.write(to:atomically:)`).
+3. Atomically writes back via `String.write(to:atomically:encoding:)`.
 4. Calls `speakers.syncUsage` with the new label set.
-5. Triggers `loadTranscript` to refresh the view.
+5. If the recording is currently linked to a project, marks it `pendingRelink` so `PipelineRelink` refreshes the copy in the project folder on the next sync. Without this, the file the user consumes outside Tapedeck (the project-folder copy at `projectDir/<stem>.transcript.txt`, written by `PipelineRelink.writeProjectLinks` at `PipelineRelink.swift:37-40`) keeps showing the old labels.
+6. Kicks off a sync so the relink runs immediately rather than waiting for the next 30-second poll.
+7. Triggers `loadTranscript` to refresh the view.
 
 **Files:**
 - Modify: `Tapedeck/Views/DetailPane.swift`
@@ -1393,7 +1497,7 @@ Inside `detailView(_ rec:)`, add between the action HStack and the `TextEditor`:
                 }
 ```
 
-Add the helper:
+Add the helpers:
 
 ```swift
     private func applyRename(rec: Recording, old: String, new: String) async {
@@ -1405,6 +1509,15 @@ Add the helper:
             try appState.speakers.syncUsage(
                 sourceId: rec.sourceId,
                 labels: parseLabels(updated))
+
+            // If a project-folder copy exists (linked recording), refresh it
+            // so the downstream consumer sees the new labels. Same mechanism
+            // PipelineTranscribe uses on retranscribe.
+            if rec.linkedProjectId != nil {
+                try appState.recordingRepo.markPendingRelink(sourceId: rec.sourceId)
+                await appState.refresh()
+                Task { await appState.syncNow(reason: "speaker_rename") }
+            }
             loadTranscript(rec)
         } catch {
             NSLog("SpeakerEditor apply failed: \(error)")
@@ -1418,6 +1531,8 @@ Add the helper:
         return dir.appending(path: "\(stem).transcript.txt")
     }
 ```
+
+`appState.recordingRepo` is already exposed as `let recordingRepo` in `Tapedeck/AppState.swift:40`, so no additional access work is needed.
 
 Replace the duplicated URL construction inside `loadTranscript` with a call to `transcriptURL(for:)`.
 
@@ -1436,22 +1551,33 @@ Also call `syncUsage` whenever a transcript is loaded so the DB stays in sync if
 **Step 3: Build the app**
 
 ```bash
-xcodebuild -project Tapedeck.xcodeproj -scheme Tapedeck -configuration Debug build 2>&1 | tail -20
+./scripts/build-local.sh 2>&1 | tail -10
 ```
 
-Expected: `BUILD SUCCEEDED`.
+Expected: `==> Built ./build/local/Tapedeck.app`.
 
 **Step 4: Manual smoke test**
 
-Launch the app:
+```bash
+open ./build/local/Tapedeck.app
+tail -F ~/Library/Logs/Tapedeck/sync.log  # in another terminal
+```
+
 1. Pick a recording with a transcript that has `[speaker 0]` / `[speaker 1]`.
-2. In the Speakers panel, type `Ben` opposite `[speaker 0]` and click Apply.
+2. In the Speakers panel, type `Ben` opposite `[speaker 0]` and click Apply (or press Return).
 3. The transcript editor should refresh: every `[speaker 0]` becomes `[Ben]`.
 4. Open a *different* recording: the dropdown should now offer `Ben`.
-5. Re-rename `[Ben]` to `[Alice]` in the original recording: confirm `Ben` falls out of the pool once no recording uses it (run `sqlite3 ~/Library/Application\ Support/Tapedeck/state.db "SELECT * FROM speaker_usage"`).
+5. Re-rename `[Ben]` to `[Alice]` in the original recording: confirm `Ben` falls out of the pool once no recording uses it (`sqlite3 ~/Library/Application\ Support/Tapedeck/state.db "SELECT DISTINCT name FROM speaker_usage"`).
 6. Try renaming `[speaker 1]` to `Ben` in a recording that already has `[Ben]`: the merge alert should appear; confirm "Merge" combines them.
-7. Type a name with `]` in it: the inline error appears and Apply is disabled.
-8. Click "Retranscribe" on a recording with named speakers: after it returns, the names should reset to `[speaker N]` and the speaker_usage rows for that source should be gone.
+7. Type a name containing `]`: the inline error appears, Apply is disabled, Return does nothing.
+8. Rename a speaker in a *linked* recording (one with a value in the "Project" picker), then inspect the project-folder copy directly:
+
+   ```bash
+   cat ~/Tapedeck/projects/<slug>/<stem>.transcript.txt | head -3
+   ```
+
+   It should show the new label. `PipelineRelink` only logs `relink_failed`, so success is silent — the file contents are the authoritative check. If the contents still show the old label, the `markPendingRelink` + `syncNow` path is misbehaving; check `sync.log` for `relink_failed` entries.
+9. Click "Retranscribe" on a recording with named speakers: after it returns, the names should reset to `[speaker N]` and the `speaker_usage` rows for that source should be gone.
 
 **Step 5: Commit**
 
@@ -1470,15 +1596,15 @@ git commit -m "feat(ui): embed SpeakerEditor in DetailPane with rename flow"
 cd TapedeckCore && swift test 2>&1 | tail -10
 ```
 
-Expected: all tests pass (89 prior + the new ones added across tasks 1–10).
+Expected: all tests pass — pre-existing suites plus the new ones added across tasks 1–10.
 
 **Step 2: Build the app one more time**
 
 ```bash
-xcodebuild -project Tapedeck.xcodeproj -scheme Tapedeck -configuration Debug build 2>&1 | tail -5
+./scripts/build-local.sh 2>&1 | tail -5
 ```
 
-Expected: `BUILD SUCCEEDED`.
+Expected: `==> Built ./build/local/Tapedeck.app`.
 
 **Step 3: Confirm the working tree is clean**
 
