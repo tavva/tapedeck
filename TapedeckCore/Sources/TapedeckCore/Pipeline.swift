@@ -48,11 +48,15 @@ public actor Pipeline {
         self.projects = ProjectRepository(store: deps.store)
     }
 
-    public func runCycle() async throws {
+    public func syncOnly() async throws {
         try ensureToken()
         try await deps.source.discoverHost()
         try await listRemote()
         try await downloadNew()
+    }
+
+    public func runCycle() async throws {
+        try await syncOnly()
         try await transcribeNew()
         try await classifyNew()
         try relinkChanged()

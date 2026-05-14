@@ -34,18 +34,77 @@ final class AppState {
     var selectedProject: String? = "all"
     var selectedSourceId: String? = nil
     var busy: SyncCoordinator.Kind? = nil
+    var helperStage: HelperStage = .idle
+    var stageDone: Int = 0
+    var stageTotal: Int = 0
+    var transientMessage: String? = nil
 
+    var activity: SyncCoordinator.Kind? {
+        switch helperStage {
+        case .syncing:      return .sync
+        case .transcribing: return .transcribePending
+        case .classifying:  return .classifyPending
+        case .idle:         return busy
+        }
+    }
+
+    struct HelperSnapshot {
+        var stage: HelperStage
+        var done: Int
+        var total: Int
+        var lastSyncAt: Int64?
+    }
+
+    private let layout: Layout
     private let store: Store
     private let projectRepo: ProjectRepository
     let recordingRepo: RecordingRepository
+    private let tokenReader: () -> Bool
+    private let coordinator: any OperationRunner
+    private let lockProbe: () -> Bool
+    private let transientDuration: Duration
     private var timer: Timer?
     let playback = PlaybackController()
 
-    init() {
-        self.store = try! Store.open(at: Layout.standard.dbURL())
-        self.projectRepo = ProjectRepository(store: store)
-        self.recordingRepo = RecordingRepository(store: store)
-        startPolling()
+    nonisolated static func defaultTokenReader() -> Bool {
+        (try? KeychainStore.shared.get(service: "tapedeck.source.jwt", account: "default")) != nil
+    }
+
+    nonisolated static func probeLock(at url: URL) -> Bool {
+        guard let lock = try? SyncLock(path: url) else { return false }
+        return lock.tryAcquire()  // released on return when lock goes out of scope
+    }
+
+    init(layout: Layout = .standard,
+         store: Store? = nil,
+         tokenReader: @escaping () -> Bool = AppState.defaultTokenReader,
+         coordinator: any OperationRunner = SyncCoordinator.shared,
+         lockProbe: (() -> Bool)? = nil,
+         polling: Bool = true,
+         transientDuration: Duration = .seconds(4)) {
+        self.layout = layout
+        self.store = (try? store ?? Store.open(at: layout.dbURL()))!
+        self.projectRepo = ProjectRepository(store: self.store)
+        self.recordingRepo = RecordingRepository(store: self.store)
+        self.tokenReader = tokenReader
+        self.coordinator = coordinator
+        self.lockProbe = lockProbe ?? { AppState.probeLock(at: layout.lockURL()) }
+        self.transientDuration = transientDuration
+        clearStaleStageIfNoHelper()
+        if polling { startPolling() }
+    }
+
+    private func clearStaleStageIfNoHelper() {
+        let raw = (try? store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }) ?? nil
+        let stored = raw.flatMap(HelperStage.init(rawValue:)) ?? .idle
+        guard stored != .idle else { return }
+        guard lockProbe() else { return }
+        try? clearHelperStage(store: store, now: { Int64(Date().timeIntervalSince1970 * 1000) })
+        self.helperStage = .idle
+        self.stageDone = 0
+        self.stageTotal = 0
     }
 
     private func startPolling() {
@@ -62,22 +121,35 @@ final class AppState {
         let storedStatus = try store.read { db in
             try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key = 'token_status'")
         }
-        let hasToken = (try? KeychainStore.shared.get(
-            service: "tapedeck.source.jwt", account: "default")) != nil
+        let hasToken = tokenReader()
         let resolved: String
         switch (hasToken, storedStatus) {
         case (false, _):        resolved = "missing"
         case (true, "expired"): resolved = "expired"
         case (true, _):         resolved = "ok"
         }
-        let lastSyncAt = try store.read { db in
-            try Int64.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key = 'last_sync_at'")
+        let snapshot: HelperSnapshot = try store.read { db in
+            let raw = try String.fetchOne(db,
+                sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+            let done = try Int.fetchOne(db,
+                sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key='helper_stage_done'") ?? 0
+            let total = try Int.fetchOne(db,
+                sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key='helper_stage_total'") ?? 0
+            let lastSync = try Int64.fetchOne(db,
+                sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key='last_sync_at'")
+            return HelperSnapshot(
+                stage: raw.flatMap(HelperStage.init(rawValue:)) ?? .idle,
+                done: done, total: total, lastSyncAt: lastSync)
         }
         self.projects = projects
         self.recordings = recordings
         self.errors = errors
         self.tokenStatus = resolved
-        self.lastSyncAt = lastSyncAt
+        self.helperStage = snapshot.stage
+        self.stageDone = snapshot.done
+        self.stageTotal = snapshot.total
+        self.lastSyncAt = snapshot.lastSyncAt
+        clearStaleStageIfNoHelper()
     }
 
     func clearTokenStatus() throws {
@@ -134,30 +206,30 @@ final class AppState {
     }
 
     func syncNow(reason: String) async {
-        await dispatch(.sync, reason: reason) { try await SyncCoordinator.shared.runOnce(reason: reason) }
+        await dispatch(.sync, reason: reason) { try await coordinator.run(.sync, reason: reason) }
     }
 
     func classifyPending(reason: String) async {
         await dispatch(.classifyPending, reason: reason) {
-            try await SyncCoordinator.shared.classifyPending(reason: reason)
+            try await coordinator.run(.classifyPending, reason: reason)
         }
     }
 
     func classifyOne(sourceId: String, reason: String) async {
         await dispatch(.classifySource(sourceId), reason: reason) {
-            try await SyncCoordinator.shared.classifyOne(sourceId: sourceId, reason: reason)
+            try await coordinator.run(.classifySource(sourceId), reason: reason)
         }
     }
 
     func transcribePending(reason: String) async {
         await dispatch(.transcribePending, reason: reason) {
-            try await SyncCoordinator.shared.transcribePending(reason: reason)
+            try await coordinator.run(.transcribePending, reason: reason)
         }
     }
 
     func transcribeOne(sourceId: String, reason: String) async {
         await dispatch(.transcribeSource(sourceId), reason: reason) {
-            try await SyncCoordinator.shared.transcribeOne(sourceId: sourceId, reason: reason)
+            try await coordinator.run(.transcribeSource(sourceId), reason: reason)
         }
     }
 
@@ -167,6 +239,13 @@ final class AppState {
         defer { busy = nil }
         do {
             _ = try await run()
+        } catch SyncCoordinator.CoordinatorError.helperBusy {
+            transientMessage = "Another sync operation is in progress."
+            let duration = transientDuration
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: duration)
+                self?.transientMessage = nil
+            }
         } catch SyncCoordinator.CoordinatorError.otherOperationRunning(let other) {
             NSLog("SyncCoordinator: \(kind) requested while \(other) running")
         } catch {

@@ -5,6 +5,38 @@ import Testing
 import Foundation
 @testable import TapedeckCore
 
+private final class LockHolder {
+    let process = Process()
+    let path: URL
+    init(path: URL) throws {
+        self.path = path
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = ["-c", """
+        import fcntl, sys, time
+        f = open(sys.argv[1], 'w')
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        print('holding', flush=True)
+        sys.stdin.read()
+        """, path.path]
+        let stdin = Pipe(); let stdout = Pipe()
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        try process.run()
+        // Wait for the "holding" line so the lock is actually held before we proceed.
+        let handle = stdout.fileHandleForReading
+        var buf = Data()
+        while !String(data: buf, encoding: .utf8)!.contains("holding") {
+            buf.append(handle.availableData)
+        }
+    }
+    func release() {
+        if let stdin = process.standardInput as? Pipe {
+            stdin.fileHandleForWriting.closeFile()
+        }
+        process.waitUntilExit()
+    }
+}
+
 @Suite("HelperRunner")
 struct HelperRunnerTests {
 
@@ -285,6 +317,49 @@ struct HelperRunnerTests {
         })
     }
 
+    @Test func runFullCycle_writesStageTransitions_andEndsIdle() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.deepgram.key:default": "dg",
+            "tapedeck.gemini.key:default": "gm",
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        try fx.store.write { db in
+            try db.execute(sql: """
+                INSERT INTO app_state(key,value) VALUES('auto_transcribe','true')
+                ON CONFLICT(key) DO UPDATE SET value='true'
+            """)
+            try db.execute(sql: """
+                INSERT INTO app_state(key,value) VALUES('auto_classify','true')
+                ON CONFLICT(key) DO UPDATE SET value='true'
+            """)
+        }
+        let capture = StageCapture(store: fx.store)
+        var deps = fx.deps
+        deps.notify = { capture.observe($0) }
+        stubSourceEmptyList(fx)
+        let status = await runHelper(.fullCycle, deps: deps)
+        #expect(status == 0)
+        #expect(capture.stages == ["syncing", "transcribing", "classifying", "idle"])
+        let finalStage = try fx.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }
+        #expect(finalStage == "idle")
+    }
+
+    @Test func runFullCycle_clearsToIdle_evenWhenPipelineThrows() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let status = await runHelper(.fullCycle, deps: fx.deps)
+        #expect(status != 0)
+        let finalStage = try fx.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }
+        #expect(finalStage == "idle")
+    }
+
     @Test func fullCycle_exitsThree_whenAutoClassifyOnButGeminiMissing() async throws {
         let fx = try await makeFixture(secrets: [
             "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
@@ -304,6 +379,126 @@ struct HelperRunnerTests {
         #expect(fx.log.all.contains {
             $0.stage == "api_key_missing" && ($0.message ?? "").contains("Gemini")
         })
+    }
+
+    @Test func runTranscribePending_setsStageThenClears() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.deepgram.key:default": "dg",
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let capture = NotifyCapture()
+        var deps = fx.deps
+        deps.notify = { capture.append($0) }
+        _ = await runHelper(.transcribePending, deps: deps)
+        let stage = try fx.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }
+        #expect(stage == "idle")
+        #expect(capture.keys.contains("helper_stage"))
+    }
+
+    @Test func runTranscribeSource_setsStageThenClears() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.deepgram.key:default": "dg",
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let capture = NotifyCapture()
+        var deps = fx.deps
+        deps.notify = { capture.append($0) }
+        _ = await runHelper(.transcribeSource("some-id"), deps: deps)
+        let stage = try fx.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }
+        #expect(stage == "idle")
+        #expect(capture.keys.contains("helper_stage"))
+    }
+
+    @Test func runClassifyPending_setsStageThenClears() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.gemini.key:default": "gm",
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let capture = NotifyCapture()
+        var deps = fx.deps
+        deps.notify = { capture.append($0) }
+        _ = await runHelper(.classifyPending, deps: deps)
+        let stage = try fx.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }
+        #expect(stage == "idle")
+        #expect(capture.keys.contains("helper_stage"))
+    }
+
+    @Test func runClassifySource_setsStageThenClears() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.gemini.key:default": "gm",
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let capture = NotifyCapture()
+        var deps = fx.deps
+        deps.notify = { capture.append($0) }
+        _ = await runHelper(.classifySource("some-id"), deps: deps)
+        let stage = try fx.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }
+        #expect(stage == "idle")
+        #expect(capture.keys.contains("helper_stage"))
+    }
+
+    // MARK: lock contention — all five runners exit 75 (EX_TEMPFAIL)
+
+    @Test func runFullCycle_returns75_whenLockHeld() async throws {
+        let fx = try await makeFixture(secrets: [:])
+        try FileManager.default.createDirectory(at: fx.layout.lockURL().deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        let holder = try LockHolder(path: fx.layout.lockURL())
+        defer { holder.release() }
+        let status = await runHelper(.fullCycle, deps: fx.deps)
+        #expect(status == 75)
+    }
+
+    @Test func runTranscribePending_returns75_whenLockHeld() async throws {
+        let fx = try await makeFixture(secrets: [:])
+        try FileManager.default.createDirectory(at: fx.layout.lockURL().deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        let holder = try LockHolder(path: fx.layout.lockURL())
+        defer { holder.release() }
+        let status = await runHelper(.transcribePending, deps: fx.deps)
+        #expect(status == 75)
+    }
+
+    @Test func runTranscribeSource_returns75_whenLockHeld() async throws {
+        let fx = try await makeFixture(secrets: [:])
+        try FileManager.default.createDirectory(at: fx.layout.lockURL().deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        let holder = try LockHolder(path: fx.layout.lockURL())
+        defer { holder.release() }
+        let status = await runHelper(.transcribeSource("x"), deps: fx.deps)
+        #expect(status == 75)
+    }
+
+    @Test func runClassifyPending_returns75_whenLockHeld() async throws {
+        let fx = try await makeFixture(secrets: [:])
+        try FileManager.default.createDirectory(at: fx.layout.lockURL().deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        let holder = try LockHolder(path: fx.layout.lockURL())
+        defer { holder.release() }
+        let status = await runHelper(.classifyPending, deps: fx.deps)
+        #expect(status == 75)
+    }
+
+    @Test func runClassifySource_returns75_whenLockHeld() async throws {
+        let fx = try await makeFixture(secrets: [:])
+        try FileManager.default.createDirectory(at: fx.layout.lockURL().deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        let holder = try LockHolder(path: fx.layout.lockURL())
+        defer { holder.release() }
+        let status = await runHelper(.classifySource("x"), deps: fx.deps)
+        #expect(status == 75)
     }
 
     @Test func transcribeSource_refreshesProjectFolderCopy_forLinkedRecording() async throws {
@@ -358,4 +553,26 @@ private final class SecretsBox: @unchecked Sendable {
     func get(service: String, account: String) -> String? {
         secrets["\(service):\(account)"]
     }
+}
+
+private final class NotifyCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _keys: [String] = []
+    func append(_ key: String) { lock.lock(); _keys.append(key); lock.unlock() }
+    var keys: [String] { lock.lock(); defer { lock.unlock() }; return _keys }
+}
+
+private final class StageCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _stages: [String] = []
+    let store: Store
+    init(store: Store) { self.store = store }
+    func observe(_ key: String) {
+        guard key == "helper_stage" else { return }
+        let raw = (try? store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }) ?? nil
+        lock.lock(); _stages.append(raw ?? "?"); lock.unlock()
+    }
+    var stages: [String] { lock.lock(); defer { lock.unlock() }; return _stages }
 }
