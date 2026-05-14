@@ -167,12 +167,16 @@ final class AppState {
     /// surfaces names from transcripts that have never been opened in the
     /// new editor (or were hand-edited outside the app). Call after the
     /// initial `refresh()` so `self.recordings` is already populated.
+    ///
+    /// Safe to run concurrently with `syncNow`: both writers fully replace
+    /// the row-set for a given `source_id`, SQLite WAL serialises them, and
+    /// `String(contentsOf:)` always observes an atomically-written transcript.
     func reconcileSpeakers() async {
         let recordings = self.recordings
         let layout = Layout.standard
-        let tuples = await Task.detached(priority: .utility) {
-            () -> [(sourceId: String, text: String)] in
-            recordings.compactMap { rec -> (sourceId: String, text: String)? in
+        let speakers = self.speakers
+        await Task.detached(priority: .utility) {
+            let tuples = recordings.compactMap { rec -> (sourceId: String, text: String)? in
                 guard rec.transcribedAt != nil else { return nil }
                 let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
                 let dir = layout.audioDir(date: date)
@@ -181,8 +185,12 @@ final class AppState {
                 guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
                 return (sourceId: rec.sourceId, text: text)
             }
+            do {
+                try speakers.reconcileAll(from: tuples)
+            } catch {
+                NSLog("reconcileSpeakers failed: \(error)")
+            }
         }.value
-        try? speakers.reconcileAll(from: tuples)
     }
 
     private func dispatch(_ kind: SyncCoordinator.Kind, reason: String,
