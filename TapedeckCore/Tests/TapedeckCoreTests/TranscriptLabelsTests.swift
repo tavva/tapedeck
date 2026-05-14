@@ -83,4 +83,21 @@ struct TranscriptLabelsTests {
         """
         #expect(renameLabel(input, from: "speaker 0", to: "Ben") == expected)
     }
+
+    @Test func parseLabels_handlesCRLFParagraphBoundaries() {
+        let txt = "[speaker 0] hi\r\n\r\n[Ben] hello"
+        #expect(parseLabels(txt) == ["speaker 0", "Ben"])
+    }
+
+    @Test func parseLabels_handlesExtraBlankLines() {
+        let txt = "[speaker 0] hi\n\n\n[Ben] hello"
+        #expect(parseLabels(txt) == ["speaker 0", "Ben"])
+    }
+
+    @Test func renameLabel_handlesCRLFParagraphBoundaries() {
+        let input = "[speaker 0] hi\r\n\r\n[speaker 0] bye"
+        let result = renameLabel(input, from: "speaker 0", to: "Ben")
+        // Both paragraphs should be rewritten; the CRLF separator stays intact.
+        #expect(result == "[Ben] hi\r\n\r\n[Ben] bye")
+    }
 }
