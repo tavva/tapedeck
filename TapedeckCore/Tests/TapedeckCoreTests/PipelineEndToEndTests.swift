@@ -22,6 +22,31 @@ struct PipelineEndToEndTests {
         return try! JSONSerialization.data(withJSONObject: envelope)
     }
 
+    /// Builds a PLAUD-style `/file/simple/web` list response with `count` synthetic
+    /// recordings. Only the fields SourceClient.listPage actually decodes are
+    /// populated; everything else matches the on-disk fixture for shape parity.
+    static func makeListResponseBody(count: Int) -> Data {
+        let items: [[String: Any]] = (0..<count).map { i in
+            let id = String(format: "rec-%032d", i)
+            return [
+                "id": id,
+                "filename": "2026-05-11 \(String(format: "%02d", i)):00:00",
+                "filesize": 32623616,
+                "fullname": "\(id).ogg",
+                "start_time": 1778503307000 + Int64(i) * 1000,
+                "end_time": 1778510953000 + Int64(i) * 1000,
+                "duration": 7646000
+            ]
+        }
+        let envelope: [String: Any] = [
+            "status": 0,
+            "msg": "success",
+            "data_file_total": count,
+            "data_file_list": items
+        ]
+        return try! JSONSerialization.data(withJSONObject: envelope)
+    }
+
     struct EndToEndFixture {
         let layout: Layout
         let store: Store
@@ -29,7 +54,7 @@ struct PipelineEndToEndTests {
         let sid: String
     }
 
-    private func makeEndToEndFixture() throws -> EndToEndFixture {
+    private func makeEndToEndFixture(downloadCount: Int = 2) throws -> EndToEndFixture {
         let layout = makeLayout()
         let store = try Store.openInMemory()
         let projects = ProjectRepository(store: store)
@@ -46,11 +71,15 @@ struct PipelineEndToEndTests {
 
         let (session, sid) = URLProtocolStub.makeSession()
         let audioBytes = Data(repeating: 0x42, count: 8)
+        let listBody = Self.makeListResponseBody(count: downloadCount)
 
         URLProtocolStub.register(sessionId: sid, "list", matching: { req in
             req.url?.path.contains("/file/simple/web") == true
         }, handler: { req in
-            URLProtocolStub.jsonResponse(for: req, fixture: "source/list_page1.json")
+            let resp = HTTPURLResponse(url: req.url!, statusCode: 200,
+                                       httpVersion: "HTTP/1.1",
+                                       headerFields: ["Content-Type": "application/json"])!
+            return (resp, listBody)
         })
         URLProtocolStub.register(sessionId: sid, "temp", matching: { req in
             req.url?.path.contains("/file/temp-url/") == true
@@ -242,5 +271,18 @@ struct PipelineEndToEndTests {
         #expect(recs.first?.audioDownloadedAt != nil)
         #expect(recs.first?.transcribedAt == nil)
         #expect(recs.first?.projectId == nil)
+    }
+
+    @Test func downloadNew_writesProgressDoneEqualsTotal() async throws {
+        let fx = try makeEndToEndFixture(downloadCount: 2)
+        try await fx.pipeline.syncOnly()
+        let total = try fx.store.read { db in
+            try Int.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key = 'helper_stage_total'")
+        }
+        let done = try fx.store.read { db in
+            try Int.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key = 'helper_stage_done'")
+        }
+        #expect(total == 2)
+        #expect(done == 2)
     }
 }
