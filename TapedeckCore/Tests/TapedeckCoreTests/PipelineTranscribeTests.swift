@@ -398,4 +398,9 @@ struct PipelineTranscribeTests {
 
         #expect(try fx.recordings.recordingsNeedingTranscription().isEmpty)
     }
+
+    @Test func runBatchTranscribe_isInternal() {
+        // Compile-only smoke; ensures the helper exists and stays in-package.
+        let _: (Pipeline) -> ([Recording]) async -> Void = { p in p.runBatchTranscribe }
+    }
 }

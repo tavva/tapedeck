@@ -10,20 +10,17 @@ extension Pipeline {
         }
         let pending = ((try? recordings.recordingsNeedingTranscription()) ?? [])
             .filter { !shouldSkipAfterFailures(sourceId: $0.sourceId, stage: SyncStage.transcribe) }
-        await withTaskGroup(of: Void.self) { group in
-            var inflight = 0
-            for rec in pending {
-                if inflight >= maxConcurrency { await group.next(); inflight -= 1 }
-                group.addTask { [self] in await self.transcribeOneSilently(rec) }
-                inflight += 1
-            }
-        }
+        await runBatchTranscribe(pending: pending)
     }
 
     /// User-triggered bulk transcription. Ignores `auto_transcribe` and the
     /// `maxFailuresPerStage` filter — the click is itself the retry signal.
     public func transcribePending() async throws {
         let pending = (try? recordings.recordingsNeedingTranscription()) ?? []
+        await runBatchTranscribe(pending: pending)
+    }
+
+    func runBatchTranscribe(pending: [Recording]) async {
         await withTaskGroup(of: Void.self) { group in
             var inflight = 0
             for rec in pending {
