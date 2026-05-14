@@ -40,6 +40,14 @@ struct SpeakerEditor: View {
                                  labels: labels)) {
                 reload()
             }
+            // Typed-but-not-applied names are per-recording. Without this,
+            // switching recordings reuses the same SwiftUI view identity and
+            // the prior recording's editText leaks into matching labels (e.g.
+            // every recording's [speaker 1]).
+            .onChange(of: sourceId) { _, _ in
+                editText.removeAll()
+                pendingMerge = nil
+            }
             .alert("Merge speakers?",
                    isPresented: Binding(
                        get: { pendingMerge != nil },
