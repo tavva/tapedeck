@@ -34,6 +34,20 @@ struct SpeakerRepositoryTests {
         let names = try fetchNames(store: store, sourceId: "S1")
         #expect(names == ["Ben"])
     }
+
+    @Test func clearUsage_removesAllRowsForSource() throws {
+        let store = try Store.openInMemory()
+        let repo = SpeakerRepository(store: store)
+        try insertRecording(store: store, sourceId: "S1")
+        try insertRecording(store: store, sourceId: "S2")
+        try repo.syncUsage(sourceId: "S1", labels: ["Alice"])
+        try repo.syncUsage(sourceId: "S2", labels: ["Bob"])
+
+        try repo.clearUsage(sourceId: "S1")
+
+        #expect(try fetchNames(store: store, sourceId: "S1") == [])
+        #expect(try fetchNames(store: store, sourceId: "S2") == ["Bob"])
+    }
 }
 
 private func insertRecording(store: Store, sourceId: String, projectId: String? = nil) throws {
