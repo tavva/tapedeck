@@ -7,6 +7,6 @@ import Testing
 @Suite("TapedeckCore smoke")
 struct SmokeTests {
     @Test func schemaVersionIsExposed() {
-        #expect(TapedeckCore.schemaVersion == 1)
+        #expect(TapedeckCore.schemaVersion == 2)
     }
 }

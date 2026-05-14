@@ -59,6 +59,7 @@ final class AppState {
     private let store: Store
     private let projectRepo: ProjectRepository
     let recordingRepo: RecordingRepository
+    let speakers: SpeakerRepository
     private let tokenReader: () -> Bool
     private let coordinator: any OperationRunner
     private let lockProbe: () -> Bool
@@ -86,6 +87,7 @@ final class AppState {
         self.store = (try? store ?? Store.open(at: layout.dbURL()))!
         self.projectRepo = ProjectRepository(store: self.store)
         self.recordingRepo = RecordingRepository(store: self.store)
+        self.speakers = SpeakerRepository(store: self.store)
         self.tokenReader = tokenReader
         self.coordinator = coordinator
         self.lockProbe = lockProbe ?? { AppState.probeLock(at: layout.lockURL()) }
@@ -231,6 +233,36 @@ final class AppState {
         await dispatch(.transcribeSource(sourceId), reason: reason) {
             try await coordinator.run(.transcribeSource(sourceId), reason: reason)
         }
+    }
+
+    /// Rebuilds `speaker_usage` from every transcript on disk so the dropdown
+    /// surfaces names from transcripts that have never been opened in the
+    /// new editor (or were hand-edited outside the app). Call after the
+    /// initial `refresh()` so `self.recordings` is already populated.
+    ///
+    /// Safe to run concurrently with `syncNow`: both writers fully replace
+    /// the row-set for a given `source_id`, SQLite WAL serialises them, and
+    /// `String(contentsOf:)` always observes an atomically-written transcript.
+    func reconcileSpeakers() async {
+        let recordings = self.recordings
+        let layout = Layout.standard
+        let speakers = self.speakers
+        await Task.detached(priority: .utility) {
+            let tuples = recordings.compactMap { rec -> (sourceId: String, text: String)? in
+                guard rec.transcribedAt != nil else { return nil }
+                let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
+                let dir = layout.audioDir(date: date)
+                let stem = layout.stem(sourceId: rec.sourceId, title: rec.filename)
+                let url = dir.appending(path: "\(stem).transcript.txt")
+                guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+                return (sourceId: rec.sourceId, text: text)
+            }
+            do {
+                try speakers.reconcileAll(from: tuples)
+            } catch {
+                NSLog("reconcileSpeakers failed: \(error)")
+            }
+        }.value
     }
 
     private func dispatch(_ kind: SyncCoordinator.Kind, reason: String,
