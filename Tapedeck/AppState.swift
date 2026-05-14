@@ -35,17 +35,42 @@ final class AppState {
     var selectedSourceId: String? = nil
     var busy: SyncCoordinator.Kind? = nil
 
+    private let layout: Layout
     private let store: Store
     private let projectRepo: ProjectRepository
     let recordingRepo: RecordingRepository
+    private let tokenReader: () -> Bool
+    private let coordinator: any OperationRunner
+    private let lockProbe: () -> Bool
+    private let transientDuration: Duration
     private var timer: Timer?
     let playback = PlaybackController()
 
-    init() {
-        self.store = try! Store.open(at: Layout.standard.dbURL())
-        self.projectRepo = ProjectRepository(store: store)
-        self.recordingRepo = RecordingRepository(store: store)
-        startPolling()
+    nonisolated static func defaultTokenReader() -> Bool {
+        (try? KeychainStore.shared.get(service: "tapedeck.source.jwt", account: "default")) != nil
+    }
+
+    nonisolated static func probeLock(at url: URL) -> Bool {
+        guard let lock = try? SyncLock(path: url) else { return false }
+        return lock.tryAcquire()  // released on return when lock goes out of scope
+    }
+
+    init(layout: Layout = .standard,
+         store: Store? = nil,
+         tokenReader: @escaping () -> Bool = AppState.defaultTokenReader,
+         coordinator: any OperationRunner = SyncCoordinator.shared,
+         lockProbe: (() -> Bool)? = nil,
+         polling: Bool = true,
+         transientDuration: Duration = .seconds(4)) {
+        self.layout = layout
+        self.store = (try? store ?? Store.open(at: layout.dbURL()))!
+        self.projectRepo = ProjectRepository(store: self.store)
+        self.recordingRepo = RecordingRepository(store: self.store)
+        self.tokenReader = tokenReader
+        self.coordinator = coordinator
+        self.lockProbe = lockProbe ?? { AppState.probeLock(at: layout.lockURL()) }
+        self.transientDuration = transientDuration
+        if polling { startPolling() }
     }
 
     private func startPolling() {
@@ -62,8 +87,7 @@ final class AppState {
         let storedStatus = try store.read { db in
             try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key = 'token_status'")
         }
-        let hasToken = (try? KeychainStore.shared.get(
-            service: "tapedeck.source.jwt", account: "default")) != nil
+        let hasToken = tokenReader()
         let resolved: String
         switch (hasToken, storedStatus) {
         case (false, _):        resolved = "missing"
@@ -134,30 +158,30 @@ final class AppState {
     }
 
     func syncNow(reason: String) async {
-        await dispatch(.sync, reason: reason) { try await SyncCoordinator.shared.runOnce(reason: reason) }
+        await dispatch(.sync, reason: reason) { try await coordinator.run(.sync, reason: reason) }
     }
 
     func classifyPending(reason: String) async {
         await dispatch(.classifyPending, reason: reason) {
-            try await SyncCoordinator.shared.classifyPending(reason: reason)
+            try await coordinator.run(.classifyPending, reason: reason)
         }
     }
 
     func classifyOne(sourceId: String, reason: String) async {
         await dispatch(.classifySource(sourceId), reason: reason) {
-            try await SyncCoordinator.shared.classifyOne(sourceId: sourceId, reason: reason)
+            try await coordinator.run(.classifySource(sourceId), reason: reason)
         }
     }
 
     func transcribePending(reason: String) async {
         await dispatch(.transcribePending, reason: reason) {
-            try await SyncCoordinator.shared.transcribePending(reason: reason)
+            try await coordinator.run(.transcribePending, reason: reason)
         }
     }
 
     func transcribeOne(sourceId: String, reason: String) async {
         await dispatch(.transcribeSource(sourceId), reason: reason) {
-            try await SyncCoordinator.shared.transcribeOne(sourceId: sourceId, reason: reason)
+            try await coordinator.run(.transcribeSource(sourceId), reason: reason)
         }
     }
 
