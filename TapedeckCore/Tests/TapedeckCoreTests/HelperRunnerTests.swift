@@ -5,6 +5,38 @@ import Testing
 import Foundation
 @testable import TapedeckCore
 
+private final class LockHolder {
+    let process = Process()
+    let path: URL
+    init(path: URL) throws {
+        self.path = path
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = ["-c", """
+        import fcntl, sys, time
+        f = open(sys.argv[1], 'w')
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        print('holding', flush=True)
+        sys.stdin.read()
+        """, path.path]
+        let stdin = Pipe(); let stdout = Pipe()
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        try process.run()
+        // Wait for the "holding" line so the lock is actually held before we proceed.
+        let handle = stdout.fileHandleForReading
+        var buf = Data()
+        while !String(data: buf, encoding: .utf8)!.contains("holding") {
+            buf.append(handle.availableData)
+        }
+    }
+    func release() {
+        if let stdin = process.standardInput as? Pipe {
+            stdin.fileHandleForWriting.closeFile()
+        }
+        process.waitUntilExit()
+    }
+}
+
 @Suite("HelperRunner")
 struct HelperRunnerTests {
 
@@ -415,6 +447,58 @@ struct HelperRunnerTests {
         }
         #expect(stage == "idle")
         #expect(capture.keys.contains("helper_stage"))
+    }
+
+    // MARK: lock contention — all five runners exit 75 (EX_TEMPFAIL)
+
+    @Test func runFullCycle_returns75_whenLockHeld() async throws {
+        let fx = try await makeFixture(secrets: [:])
+        try FileManager.default.createDirectory(at: fx.layout.lockURL().deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        let holder = try LockHolder(path: fx.layout.lockURL())
+        defer { holder.release() }
+        let status = await runHelper(.fullCycle, deps: fx.deps)
+        #expect(status == 75)
+    }
+
+    @Test func runTranscribePending_returns75_whenLockHeld() async throws {
+        let fx = try await makeFixture(secrets: [:])
+        try FileManager.default.createDirectory(at: fx.layout.lockURL().deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        let holder = try LockHolder(path: fx.layout.lockURL())
+        defer { holder.release() }
+        let status = await runHelper(.transcribePending, deps: fx.deps)
+        #expect(status == 75)
+    }
+
+    @Test func runTranscribeSource_returns75_whenLockHeld() async throws {
+        let fx = try await makeFixture(secrets: [:])
+        try FileManager.default.createDirectory(at: fx.layout.lockURL().deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        let holder = try LockHolder(path: fx.layout.lockURL())
+        defer { holder.release() }
+        let status = await runHelper(.transcribeSource("x"), deps: fx.deps)
+        #expect(status == 75)
+    }
+
+    @Test func runClassifyPending_returns75_whenLockHeld() async throws {
+        let fx = try await makeFixture(secrets: [:])
+        try FileManager.default.createDirectory(at: fx.layout.lockURL().deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        let holder = try LockHolder(path: fx.layout.lockURL())
+        defer { holder.release() }
+        let status = await runHelper(.classifyPending, deps: fx.deps)
+        #expect(status == 75)
+    }
+
+    @Test func runClassifySource_returns75_whenLockHeld() async throws {
+        let fx = try await makeFixture(secrets: [:])
+        try FileManager.default.createDirectory(at: fx.layout.lockURL().deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        let holder = try LockHolder(path: fx.layout.lockURL())
+        defer { holder.release() }
+        let status = await runHelper(.classifySource("x"), deps: fx.deps)
+        #expect(status == 75)
     }
 
     @Test func transcribeSource_refreshesProjectFolderCopy_forLinkedRecording() async throws {

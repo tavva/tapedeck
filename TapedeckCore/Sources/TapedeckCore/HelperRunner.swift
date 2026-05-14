@@ -154,7 +154,7 @@ private func runClassifyPending(deps: HelperDeps) async -> Int32 {
         let lock = try SyncLock(path: deps.layout.lockURL())
         guard lock.tryAcquire() else {
             deps.logger.info("classify_skipped_already_running", source: nil)
-            return 0
+            return 75
         }
         let store = try deps.openStore(deps.layout.dbURL())
         defer {
@@ -182,7 +182,7 @@ private func runClassifySource(_ sourceId: String, deps: HelperDeps) async -> In
         let lock = try SyncLock(path: deps.layout.lockURL())
         guard lock.tryAcquire() else {
             deps.logger.info("classify_skipped_already_running", source: sourceId)
-            return 0
+            return 75
         }
         let store = try deps.openStore(deps.layout.dbURL())
         defer {
@@ -224,7 +224,7 @@ private func runTranscribePending(deps: HelperDeps) async -> Int32 {
         let lock = try SyncLock(path: deps.layout.lockURL())
         guard lock.tryAcquire() else {
             deps.logger.info("transcribe_skipped_already_running", source: nil)
-            return 0
+            return 75
         }
         let store = try deps.openStore(deps.layout.dbURL())
         defer {
@@ -252,7 +252,7 @@ private func runTranscribeSource(_ sourceId: String, deps: HelperDeps) async -> 
         let lock = try SyncLock(path: deps.layout.lockURL())
         guard lock.tryAcquire() else {
             deps.logger.info("transcribe_skipped_already_running", source: sourceId)
-            return 0
+            return 75
         }
         let store = try deps.openStore(deps.layout.dbURL())
         defer {
