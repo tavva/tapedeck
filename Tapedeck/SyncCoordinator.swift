@@ -3,6 +3,10 @@
 
 import Foundation
 
+protocol OperationRunner: Sendable {
+    func run(_ kind: SyncCoordinator.Kind, reason: String) async throws -> Int32
+}
+
 actor SyncCoordinator {
     static let shared = SyncCoordinator()
 
@@ -26,6 +30,7 @@ actor SyncCoordinator {
 
     enum CoordinatorError: Error, Equatable {
         case otherOperationRunning(Kind)
+        case helperBusy(Kind)
     }
 
     typealias Spawner = @Sendable (Kind, String) async throws -> Int32
@@ -68,7 +73,11 @@ actor SyncCoordinator {
             throw CoordinatorError.otherOperationRunning(cur.kind)
         }
         let spawner = self.spawner
-        let task = Task { try await spawner(kind, reason) }
+        let task = Task { () throws -> Int32 in
+            let status = try await spawner(kind, reason)
+            if status == 75 { throw CoordinatorError.helperBusy(kind) }
+            return status
+        }
         current = (kind, task)
         defer { current = nil }
         return try await task.value
@@ -88,6 +97,18 @@ actor SyncCoordinator {
             }
             do { try proc.run() }
             catch { cont.resume(throwing: error) }
+        }
+    }
+}
+
+extension SyncCoordinator: OperationRunner {
+    func run(_ kind: Kind, reason: String) async throws -> Int32 {
+        switch kind {
+        case .sync:                       return try await runOnce(reason: reason)
+        case .classifyPending:            return try await classifyPending(reason: reason)
+        case .classifySource(let id):     return try await classifyOne(sourceId: id, reason: reason)
+        case .transcribePending:          return try await transcribePending(reason: reason)
+        case .transcribeSource(let id):   return try await transcribeOne(sourceId: id, reason: reason)
         }
     }
 }
