@@ -38,6 +38,7 @@ final class AppState {
     private let store: Store
     private let projectRepo: ProjectRepository
     let recordingRepo: RecordingRepository
+    let speakers: SpeakerRepository
     private var timer: Timer?
     let playback = PlaybackController()
 
@@ -45,6 +46,7 @@ final class AppState {
         self.store = try! Store.open(at: Layout.standard.dbURL())
         self.projectRepo = ProjectRepository(store: store)
         self.recordingRepo = RecordingRepository(store: store)
+        self.speakers = SpeakerRepository(store: store)
         startPolling()
     }
 
@@ -159,6 +161,28 @@ final class AppState {
         await dispatch(.transcribeSource(sourceId), reason: reason) {
             try await SyncCoordinator.shared.transcribeOne(sourceId: sourceId, reason: reason)
         }
+    }
+
+    /// Rebuilds `speaker_usage` from every transcript on disk so the dropdown
+    /// surfaces names from transcripts that have never been opened in the
+    /// new editor (or were hand-edited outside the app). Call after the
+    /// initial `refresh()` so `self.recordings` is already populated.
+    func reconcileSpeakers() async {
+        let recordings = self.recordings
+        let layout = Layout.standard
+        let tuples = await Task.detached(priority: .utility) {
+            () -> [(sourceId: String, text: String)] in
+            recordings.compactMap { rec -> (sourceId: String, text: String)? in
+                guard rec.transcribedAt != nil else { return nil }
+                let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
+                let dir = layout.audioDir(date: date)
+                let stem = layout.stem(sourceId: rec.sourceId, title: rec.filename)
+                let url = dir.appending(path: "\(stem).transcript.txt")
+                guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+                return (sourceId: rec.sourceId, text: text)
+            }
+        }.value
+        try? speakers.reconcileAll(from: tuples)
     }
 
     private func dispatch(_ kind: SyncCoordinator.Kind, reason: String,
