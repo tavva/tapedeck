@@ -103,10 +103,13 @@ struct DetailPane: View {
         let updated = renameLabel(current, from: old, to: new)
         do {
             try updated.write(to: url, atomically: true, encoding: .utf8)
+            // Update speaker_usage immediately on file rewrite — independent
+            // of any later relink work that might throw before loadTranscript
+            // runs at the end of this block.
+            try? appState.speakers.syncUsage(
+                sourceId: rec.sourceId,
+                labels: parseLabels(updated))
 
-            // If a project-folder copy exists (linked recording), refresh it
-            // so the downstream consumer sees the new labels. Same mechanism
-            // PipelineTranscribe uses on retranscribe.
             if rec.linkedProjectId != nil {
                 try appState.recordingRepo.markPendingRelink(sourceId: rec.sourceId)
                 // Refresh now so the UI reflects the new labels immediately;
