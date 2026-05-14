@@ -285,6 +285,49 @@ struct HelperRunnerTests {
         })
     }
 
+    @Test func runFullCycle_writesStageTransitions_andEndsIdle() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.deepgram.key:default": "dg",
+            "tapedeck.gemini.key:default": "gm",
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        try fx.store.write { db in
+            try db.execute(sql: """
+                INSERT INTO app_state(key,value) VALUES('auto_transcribe','true')
+                ON CONFLICT(key) DO UPDATE SET value='true'
+            """)
+            try db.execute(sql: """
+                INSERT INTO app_state(key,value) VALUES('auto_classify','true')
+                ON CONFLICT(key) DO UPDATE SET value='true'
+            """)
+        }
+        let capture = StageCapture(store: fx.store)
+        var deps = fx.deps
+        deps.notify = { capture.observe($0) }
+        stubSourceEmptyList(fx)
+        let status = await runHelper(.fullCycle, deps: deps)
+        #expect(status == 0)
+        #expect(capture.stages == ["syncing", "transcribing", "classifying", "idle"])
+        let finalStage = try fx.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }
+        #expect(finalStage == "idle")
+    }
+
+    @Test func runFullCycle_clearsToIdle_evenWhenPipelineThrows() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let status = await runHelper(.fullCycle, deps: fx.deps)
+        #expect(status != 0)
+        let finalStage = try fx.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }
+        #expect(finalStage == "idle")
+    }
+
     @Test func fullCycle_exitsThree_whenAutoClassifyOnButGeminiMissing() async throws {
         let fx = try await makeFixture(secrets: [
             "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
@@ -358,4 +401,26 @@ private final class SecretsBox: @unchecked Sendable {
     func get(service: String, account: String) -> String? {
         secrets["\(service):\(account)"]
     }
+}
+
+private final class NotifyCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _keys: [String] = []
+    func append(_ key: String) { lock.lock(); _keys.append(key); lock.unlock() }
+    var keys: [String] { lock.lock(); defer { lock.unlock() }; return _keys }
+}
+
+private final class StageCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _stages: [String] = []
+    let store: Store
+    init(store: Store) { self.store = store }
+    func observe(_ key: String) {
+        guard key == "helper_stage" else { return }
+        let raw = (try? store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }) ?? nil
+        lock.lock(); _stages.append(raw ?? "?"); lock.unlock()
+    }
+    var stages: [String] { lock.lock(); defer { lock.unlock() }; return _stages }
 }
