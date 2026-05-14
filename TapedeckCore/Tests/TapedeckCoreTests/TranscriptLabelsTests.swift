@@ -19,4 +19,31 @@ struct TranscriptLabelsTests {
         #expect(!isDefaultLabel(""))
         #expect(!isDefaultLabel("Ben"))
     }
+
+    @Test func parseLabels_returnsUniqueInFirstOccurrenceOrder() {
+        let txt = """
+        [speaker 0] hello there
+
+        [speaker 1] hi
+
+        [speaker 0] how are you
+
+        [Ben] good thanks
+        """
+        #expect(parseLabels(txt) == ["speaker 0", "speaker 1", "Ben"])
+    }
+
+    @Test func parseLabels_ignoresBracketsMidParagraph() {
+        let txt = """
+        [speaker 0] he said [hello] to me
+
+        [Alice] and she said [goodbye]
+        """
+        #expect(parseLabels(txt) == ["speaker 0", "Alice"])
+    }
+
+    @Test func parseLabels_returnsEmptyForEmptyOrUnlabelled() {
+        #expect(parseLabels("") == [])
+        #expect(parseLabels("no labels here\n\njust text") == [])
+    }
 }
