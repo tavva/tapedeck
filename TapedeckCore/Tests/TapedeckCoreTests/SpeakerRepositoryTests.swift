@@ -48,16 +48,72 @@ struct SpeakerRepositoryTests {
         #expect(try fetchNames(store: store, sourceId: "S1") == [])
         #expect(try fetchNames(store: store, sourceId: "S2") == ["Bob"])
     }
+
+    @Test func knownSpeakers_ranksProjectFirstThenFrequency() throws {
+        let store = try Store.openInMemory()
+        let repo = SpeakerRepository(store: store)
+        try insertRecording(store: store, sourceId: "A", projectId: "P1")
+        try insertRecording(store: store, sourceId: "B", projectId: "P2")
+        try insertRecording(store: store, sourceId: "C", projectId: "P2")
+        try insertRecording(store: store, sourceId: "D", projectId: "P2")
+
+        try repo.syncUsage(sourceId: "A", labels: ["Alice"])
+        try repo.syncUsage(sourceId: "B", labels: ["Bob"])
+        try repo.syncUsage(sourceId: "C", labels: ["Bob"])
+        try repo.syncUsage(sourceId: "D", labels: ["Bob", "Carol"])
+
+        let speakers = try repo.knownSpeakers(for: "P1")
+        #expect(speakers == [
+            .init(name: "Alice", inCurrentProject: true),
+            .init(name: "Bob",   inCurrentProject: false),
+            .init(name: "Carol", inCurrentProject: false),
+        ])
+    }
+
+    @Test func knownSpeakers_followsCurrentProjectAfterReassignment() throws {
+        let store = try Store.openInMemory()
+        let repo = SpeakerRepository(store: store)
+        let recordings = RecordingRepository(store: store)
+        try insertRecording(store: store, sourceId: "S1", projectId: "P1")
+        try insertProject(store: store, projectId: "P2")
+        try repo.syncUsage(sourceId: "S1", labels: ["Ben"])
+
+        try recordings.setClassification(
+            sourceId: "S1", projectId: "P2",
+            confidence: 1.0, reasoning: "manual", by: "user", at: 0,
+            linkState: .linked)
+
+        let inP1 = try repo.knownSpeakers(for: "P1")
+        let inP2 = try repo.knownSpeakers(for: "P2")
+        #expect(inP1 == [.init(name: "Ben", inCurrentProject: false)])
+        #expect(inP2 == [.init(name: "Ben", inCurrentProject: true)])
+    }
+
+    @Test func knownSpeakers_excludesDefaultLabelsOnly() throws {
+        let store = try Store.openInMemory()
+        let repo = SpeakerRepository(store: store)
+        try insertRecording(store: store, sourceId: "S1")
+
+        // syncUsage will drop "speaker 0" but keep "speaker coach"
+        try repo.syncUsage(sourceId: "S1", labels: ["speaker 0", "speaker coach", "Ben"])
+
+        let names = try repo.knownSpeakers(for: nil).map(\.name)
+        #expect(Set(names) == ["speaker coach", "Ben"])
+    }
+}
+
+private func insertProject(store: Store, projectId: String) throws {
+    try store.write { db in
+        try db.execute(sql: """
+            INSERT OR IGNORE INTO projects(id, display_name, description, created_at)
+            VALUES (?, ?, '', 0)
+        """, arguments: [projectId, projectId])
+    }
 }
 
 private func insertRecording(store: Store, sourceId: String, projectId: String? = nil) throws {
     if let pid = projectId {
-        try store.write { db in
-            try db.execute(sql: """
-                INSERT OR IGNORE INTO projects(id, display_name, description, created_at)
-                VALUES (?, ?, '', 0)
-            """, arguments: [pid, pid])
-        }
+        try insertProject(store: store, projectId: pid)
     }
     try store.write { db in
         try db.execute(sql: """
