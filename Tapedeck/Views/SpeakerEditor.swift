@@ -127,11 +127,7 @@ struct SpeakerEditor: View {
     /// Returns the validation error for a candidate name, or nil if valid.
     /// Used both to gate the Apply button and to render the inline error.
     private func validate(_ name: String) -> String? {
-        if name.isEmpty { return "Name cannot be empty" }
-        if name.contains("[") || name.contains("]") || name.contains("\n") {
-            return "Name cannot contain [, ], or newlines"
-        }
-        return nil
+        validateSpeakerName(name)
     }
 
     private func applyRename(label: String) async {

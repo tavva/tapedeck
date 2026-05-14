@@ -64,6 +64,22 @@ private func splitParagraphs(_ text: String) -> (paragraphs: [String], separator
     return (paragraphs, separators)
 }
 
+/// Returns nil if `name` is a valid replacement label, or a short
+/// human-readable error string explaining why it's invalid.
+///
+/// The contract is the inverse of `renameLabel`'s precondition: trimming
+/// must leave a non-empty string, and the result must not contain `[`,
+/// `]`, or any newline characters — those would break the paragraph
+/// label parser.
+public func validateSpeakerName(_ name: String) -> String? {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty { return "Name cannot be empty" }
+    if trimmed.contains("[") || trimmed.contains("]") || trimmed.contains("\n") {
+        return "Name cannot contain [, ], or newlines"
+    }
+    return nil
+}
+
 /// Rewrites every paragraph whose leading label is `old` so its label becomes
 /// `new`. Splits on blank-line paragraph boundaries; the `[old]` token must
 /// be the very first non-whitespace content of the paragraph to match.
