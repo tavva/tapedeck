@@ -46,4 +46,41 @@ struct TranscriptLabelsTests {
         #expect(parseLabels("") == [])
         #expect(parseLabels("no labels here\n\njust text") == [])
     }
+
+    @Test func renameLabel_rewritesOnlyLeadingLabels() {
+        let input = """
+        [speaker 0] he said [speaker 0] earlier
+
+        [speaker 1] noted
+        """
+        let expected = """
+        [Ben] he said [speaker 0] earlier
+
+        [speaker 1] noted
+        """
+        #expect(renameLabel(input, from: "speaker 0", to: "Ben") == expected)
+    }
+
+    @Test func renameLabel_isNoOpWhenOldNotPresent() {
+        let txt = "[Alice] hello\n\n[Bob] hi"
+        #expect(renameLabel(txt, from: "speaker 0", to: "Ben") == txt)
+    }
+
+    @Test func renameLabel_mergesIntoExistingLabel() {
+        let input = """
+        [speaker 0] alpha
+
+        [Ben] beta
+
+        [speaker 0] gamma
+        """
+        let expected = """
+        [Ben] alpha
+
+        [Ben] beta
+
+        [Ben] gamma
+        """
+        #expect(renameLabel(input, from: "speaker 0", to: "Ben") == expected)
+    }
 }
