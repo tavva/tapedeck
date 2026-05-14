@@ -100,6 +100,34 @@ struct SpeakerRepositoryTests {
         let names = try repo.knownSpeakers(for: nil).map(\.name)
         #expect(Set(names) == ["speaker coach", "Ben"])
     }
+
+    @Test func reconcileAll_populatesPoolFromUnopenedTranscripts() throws {
+        let store = try Store.openInMemory()
+        let repo = SpeakerRepository(store: store)
+        try insertRecording(store: store, sourceId: "A", projectId: "P1")
+        try insertRecording(store: store, sourceId: "B", projectId: "P1")
+
+        try repo.reconcileAll(from: [
+            (sourceId: "A", text: "[speaker 0] hi\n\n[Alice] hello"),
+            (sourceId: "B", text: "[Bob] hey"),
+        ])
+
+        let names = try repo.knownSpeakers(for: "P1").map(\.name)
+        #expect(Set(names) == ["Alice", "Bob"])
+    }
+
+    @Test func reconcileAll_replacesPriorRowsForListedSources() throws {
+        let store = try Store.openInMemory()
+        let repo = SpeakerRepository(store: store)
+        try insertRecording(store: store, sourceId: "A")
+        try repo.syncUsage(sourceId: "A", labels: ["Stale"])
+
+        try repo.reconcileAll(from: [
+            (sourceId: "A", text: "[Fresh] hi"),
+        ])
+
+        #expect(try fetchNames(store: store, sourceId: "A") == ["Fresh"])
+    }
 }
 
 private func insertProject(store: Store, projectId: String) throws {
