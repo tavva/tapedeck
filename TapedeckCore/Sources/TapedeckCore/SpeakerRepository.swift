@@ -28,6 +28,31 @@ public struct SpeakerRepository: Sendable {
         }
     }
 
+    /// Returns every distinct speaker name (excluding `speaker N` defaults)
+    /// ordered by: rows whose recording is in `projectId` first (by their
+    /// in-project frequency), then the rest by global frequency, with
+    /// alphabetical name as the final tiebreak.
+    public func knownSpeakers(for projectId: String?) throws -> [KnownSpeaker] {
+        try store.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT u.name AS name,
+                       SUM(CASE WHEN r.project_id = ? THEN 1 ELSE 0 END) AS in_project,
+                       COUNT(*) AS total
+                FROM speaker_usage u
+                JOIN recordings r ON r.source_id = u.source_id
+                GROUP BY u.name
+                ORDER BY in_project DESC, total DESC, u.name ASC
+            """, arguments: [projectId])
+
+            return rows.compactMap { row in
+                let name: String = row["name"]
+                guard !isDefaultLabel(name) else { return nil }
+                let inProject: Int = row["in_project"]
+                return KnownSpeaker(name: name, inCurrentProject: inProject > 0)
+            }
+        }
+    }
+
     /// Removes every `speaker_usage` row for `sourceId`. Called when a
     /// transcript is rewritten by re-transcription.
     public func clearUsage(sourceId: String) throws {
