@@ -62,6 +62,19 @@ public struct SpeakerRepository: Sendable {
         }
     }
 
+    /// Rebuilds `speaker_usage` rows for every supplied `(sourceId, text)`
+    /// tuple. Wraps every per-source update in a single transaction so the
+    /// dropdown sees a consistent snapshot. The caller is responsible for
+    /// reading the on-disk transcripts and passing the text in.
+    public func reconcileAll(from transcripts: [(sourceId: String, text: String)]) throws {
+        try store.write { db in
+            for entry in transcripts {
+                let labels = parseLabels(entry.text)
+                try syncUsageInTx(db, sourceId: entry.sourceId, labels: labels)
+            }
+        }
+    }
+
     /// Shared transaction body. `syncUsage` and `reconcileAll` both call this;
     /// the caller is responsible for owning the surrounding `store.write`.
     func syncUsageInTx(_ db: Database, sourceId: String, labels: [String]) throws {
