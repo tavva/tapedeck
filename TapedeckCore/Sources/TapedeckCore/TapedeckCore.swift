@@ -2,5 +2,5 @@
 // ABOUTME: Implementation lives in sibling files (Store, SourceClient, etc).
 
 public enum TapedeckCore {
-    public static let schemaVersion = 1
+    public static let schemaVersion = 2
 }
