@@ -447,4 +447,35 @@ struct PipelineTranscribeTests {
         #expect(total == 2)
         #expect(done == 2)
     }
+
+    private struct OneFixture {
+        let store: Store
+        let recordings: RecordingRepository
+        let sessionId: String
+        let recordingId: String
+        let pipeline: Pipeline
+    }
+
+    private func makeTranscribeOneFixture() async throws -> OneFixture {
+        let fx = try makeFixture()
+        stubDeepgramOK(fx)
+        let rec = try insertDownloadedRecording(fx)
+        return OneFixture(store: fx.store, recordings: fx.recordings,
+                          sessionId: fx.sessionId, recordingId: rec.sourceId,
+                          pipeline: makePipelineWith(fx))
+    }
+
+    @Test func transcribeOne_writes_0of1_then_1of1_onSuccess() async throws {
+        let fx = try await makeTranscribeOneFixture()
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        try await fx.pipeline.transcribeOne(sourceId: fx.recordingId)
+        let done = try fx.store.read { db in
+            try Int.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key = 'helper_stage_done'")
+        }
+        let total = try fx.store.read { db in
+            try Int.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key = 'helper_stage_total'")
+        }
+        #expect(done == 1)
+        #expect(total == 1)
+    }
 }
