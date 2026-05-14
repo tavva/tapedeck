@@ -13,6 +13,12 @@ struct SpeakerEditor: View {
 
     @State private var editText: [String: String] = [:]
     @State private var known: [KnownSpeaker] = []
+    @State private var pendingMerge: PendingMerge? = nil
+
+    private struct PendingMerge: Equatable {
+        let oldLabel: String
+        let newLabel: String
+    }
 
     private var labels: [String] { parseLabels(transcript) }
 
@@ -33,6 +39,23 @@ struct SpeakerEditor: View {
             .task(id: ReloadKey(sourceId: sourceId, projectId: projectId,
                                  labels: labels)) {
                 reload()
+            }
+            .alert("Merge speakers?",
+                   isPresented: Binding(
+                       get: { pendingMerge != nil },
+                       set: { if !$0 { pendingMerge = nil } })) {
+                Button("Cancel", role: .cancel) { pendingMerge = nil }
+                Button("Merge", role: .destructive) {
+                    if let m = pendingMerge {
+                        Task { await onApply(m.oldLabel, m.newLabel) }
+                    }
+                    pendingMerge = nil
+                }
+            } message: {
+                if let m = pendingMerge {
+                    Text("\"[\(m.newLabel)]\" already exists in this transcript. " +
+                         "Merging cannot be undone without re-transcribing.")
+                }
             }
         }
     }
@@ -111,6 +134,10 @@ struct SpeakerEditor: View {
         let candidate = (editText[label] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard candidate != label else { return }
         guard validate(candidate) == nil else { return }
+        if labels.contains(candidate) {
+            pendingMerge = PendingMerge(oldLabel: label, newLabel: candidate)
+            return
+        }
         await onApply(label, candidate)
         // editText is cleared by DetailPane re-reading the transcript, which
         // changes the parsed `labels` set and re-renders this view.
