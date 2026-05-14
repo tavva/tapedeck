@@ -85,6 +85,7 @@ extension Pipeline {
         try txt.write(to: dir.appending(path: "\(stem).transcript.txt"),
                       atomically: true, encoding: .utf8)
         try recordings.setTranscribed(sourceId: rec.sourceId, at: deps.now())
+        try speakers.clearUsage(sourceId: rec.sourceId)
         try recordings.clearError(sourceId: rec.sourceId, stage: .transcribe)
         if rec.linkedProjectId != nil {
             try recordings.markPendingRelink(sourceId: rec.sourceId)
