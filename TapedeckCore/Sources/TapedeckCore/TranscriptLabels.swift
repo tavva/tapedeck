@@ -34,3 +34,19 @@ private func leadingLabel(of paragraph: String) -> String? {
     guard !label.isEmpty, !label.contains("\n") else { return nil }
     return label
 }
+
+/// Rewrites every paragraph whose leading label is `old` so its label becomes
+/// `new`. Splits on blank-line paragraph boundaries; the `[old]` token must
+/// be the very first non-whitespace content of the paragraph to match.
+public func renameLabel(_ transcript: String, from old: String, to new: String) -> String {
+    let oldToken = "[\(old)]"
+    let newToken = "[\(new)]"
+    let paragraphs = transcript.components(separatedBy: "\n\n")
+    let rewritten = paragraphs.map { paragraph -> String in
+        guard leadingLabel(of: paragraph) == old else { return paragraph }
+        let leadingWhitespace = paragraph.prefix(while: { $0 == " " || $0 == "\t" })
+        let body = paragraph.dropFirst(leadingWhitespace.count).dropFirst(oldToken.count)
+        return leadingWhitespace + newToken + body
+    }
+    return rewritten.joined(separator: "\n\n")
+}
