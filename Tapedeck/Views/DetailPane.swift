@@ -68,6 +68,16 @@ struct DetailPane: View {
                               || rec.transcribedAt == nil
                               || appState.projects.isEmpty)
                 }
+                if !transcriptText.isEmpty {
+                    SpeakerEditor(
+                        sourceId: rec.sourceId,
+                        projectId: rec.projectId,
+                        transcript: transcriptText,
+                        onApply: { old, new in
+                            await applyRename(rec: rec, old: old, new: new)
+                        }
+                    )
+                }
                 TextEditor(text: .constant(transcriptText))
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 220)
@@ -80,10 +90,41 @@ struct DetailPane: View {
     }
 
     private func loadTranscript(_ rec: Recording) {
+        let url = transcriptURL(for: rec)
+        transcriptText = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        try? appState.speakers.syncUsage(
+            sourceId: rec.sourceId,
+            labels: parseLabels(transcriptText))
+    }
+
+    private func applyRename(rec: Recording, old: String, new: String) async {
+        let url = transcriptURL(for: rec)
+        guard let current = try? String(contentsOf: url, encoding: .utf8) else { return }
+        let updated = renameLabel(current, from: old, to: new)
+        do {
+            try updated.write(to: url, atomically: true, encoding: .utf8)
+            try appState.speakers.syncUsage(
+                sourceId: rec.sourceId,
+                labels: parseLabels(updated))
+
+            // If a project-folder copy exists (linked recording), refresh it
+            // so the downstream consumer sees the new labels. Same mechanism
+            // PipelineTranscribe uses on retranscribe.
+            if rec.linkedProjectId != nil {
+                try appState.recordingRepo.markPendingRelink(sourceId: rec.sourceId)
+                try await appState.refresh()
+                Task { await appState.syncNow(reason: "speaker_rename") }
+            }
+            loadTranscript(rec)
+        } catch {
+            NSLog("SpeakerEditor apply failed: \(error)")
+        }
+    }
+
+    private func transcriptURL(for rec: Recording) -> URL {
         let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
         let dir = Layout.standard.audioDir(date: date)
         let stem = Layout.standard.stem(sourceId: rec.sourceId, title: rec.filename)
-        let url = dir.appending(path: "\(stem).transcript.txt")
-        transcriptText = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        return dir.appending(path: "\(stem).transcript.txt")
     }
 }
