@@ -90,7 +90,21 @@ final class AppState {
         self.coordinator = coordinator
         self.lockProbe = lockProbe ?? { AppState.probeLock(at: layout.lockURL()) }
         self.transientDuration = transientDuration
+        clearStaleStageIfNoHelper()
         if polling { startPolling() }
+    }
+
+    private func clearStaleStageIfNoHelper() {
+        let raw = (try? store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }) ?? nil
+        let stored = raw.flatMap(HelperStage.init(rawValue:)) ?? .idle
+        guard stored != .idle else { return }
+        guard lockProbe() else { return }
+        try? clearHelperStage(store: store, now: { Int64(Date().timeIntervalSince1970 * 1000) })
+        self.helperStage = .idle
+        self.stageDone = 0
+        self.stageTotal = 0
     }
 
     private func startPolling() {
@@ -135,6 +149,7 @@ final class AppState {
         self.stageDone = snapshot.done
         self.stageTotal = snapshot.total
         self.lastSyncAt = snapshot.lastSyncAt
+        clearStaleStageIfNoHelper()
     }
 
     func clearTokenStatus() throws {

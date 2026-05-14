@@ -2,6 +2,7 @@
 // ABOUTME: Production AppState() keeps default behaviour; this seam swaps deps in-process.
 
 import XCTest
+import GRDB
 import TapedeckCore
 @testable import Tapedeck
 
@@ -75,6 +76,50 @@ final class AppStateTests: XCTestCase {
         XCTAssertNotNil(state.transientMessage)
         try await Task.sleep(for: .milliseconds(80))
         XCTAssertNil(state.transientMessage)
+    }
+
+    func testStaleStageCleared_atInit_whenLockFree() throws {
+        let store = try Store.openInMemory()
+        try writeHelperStage(.transcribing, store: store, now: { 1 })
+        let state = AppState(layout: .standard, store: store,
+                             tokenReader: { true },
+                             coordinator: FakeRunner(status: 0),
+                             lockProbe: { true },           // lock acquired = no helper
+                             polling: false,
+                             transientDuration: .milliseconds(10))
+        XCTAssertEqual(state.helperStage, .idle)
+        // DB should also be reset, not just the in-memory property.
+        let raw = try store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }
+        XCTAssertEqual(raw, "idle")
+    }
+
+    func testStaleStageCleared_onRefresh_whenLockFree() async throws {
+        let store = try Store.openInMemory()
+        let state = AppState(layout: .standard, store: store,
+                             tokenReader: { true },
+                             coordinator: FakeRunner(status: 0),
+                             lockProbe: { true },
+                             polling: false,
+                             transientDuration: .milliseconds(10))
+        // Stage goes stale *after* init.
+        try writeHelperStage(.transcribing, store: store, now: { 2 })
+        try await state.refresh()
+        XCTAssertEqual(state.helperStage, .idle)
+    }
+
+    func testStaleStageRetained_whenLockHeld() async throws {
+        let store = try Store.openInMemory()
+        try writeHelperStage(.transcribing, store: store, now: { 1 })
+        let state = AppState(layout: .standard, store: store,
+                             tokenReader: { true },
+                             coordinator: FakeRunner(status: 0),
+                             lockProbe: { false },          // lock held by another process
+                             polling: false,
+                             transientDuration: .milliseconds(10))
+        try await state.refresh()
+        XCTAssertEqual(state.helperStage, .transcribing)
     }
 }
 
