@@ -28,6 +28,15 @@ public struct SpeakerRepository: Sendable {
         }
     }
 
+    /// Removes every `speaker_usage` row for `sourceId`. Called when a
+    /// transcript is rewritten by re-transcription.
+    public func clearUsage(sourceId: String) throws {
+        try store.write { db in
+            try db.execute(sql: "DELETE FROM speaker_usage WHERE source_id = ?",
+                           arguments: [sourceId])
+        }
+    }
+
     /// Shared transaction body. `syncUsage` and `reconcileAll` both call this;
     /// the caller is responsible for owning the surrounding `store.write`.
     func syncUsageInTx(_ db: Database, sourceId: String, labels: [String]) throws {
