@@ -83,9 +83,13 @@ private func runFullCycle(deps: HelperDeps) async -> Int32 {
         let lock = try SyncLock(path: deps.layout.lockURL())
         guard lock.tryAcquire() else {
             deps.logger.info("sync_skipped_already_running", source: nil)
-            return 0
+            return 75
         }
         let store = try deps.openStore(deps.layout.dbURL())
+        defer {
+            try? clearHelperStage(store: store, now: deps.now)
+            deps.notify("helper_stage")
+        }
         guard let token = try deps.readSecret("tapedeck.source.jwt", "default") else {
             deps.logger.error("token_missing", source: nil, message: "no JWT in keychain")
             return 2
@@ -94,7 +98,6 @@ private func runFullCycle(deps: HelperDeps) async -> Int32 {
         let needsGemini   = autoFlag(store: store, key: "auto_classify")
         let deepgramKey   = try deps.readSecret("tapedeck.deepgram.key", "default")
         let geminiKey     = try deps.readSecret("tapedeck.gemini.key", "default")
-
         if needsDeepgram && deepgramKey == nil {
             deps.logger.error("api_key_missing", source: nil,
                               message: "Deepgram key missing (auto_transcribe on)")
@@ -111,7 +114,23 @@ private func runFullCycle(deps: HelperDeps) async -> Int32 {
             deepgram: deps.makeDeepgram(deepgramKey ?? ""),
             gemini:   deps.makeGemini(geminiKey ?? ""),
             logger: deps.logger, now: deps.now))
-        try await pipeline.runCycle()
+
+        try writeHelperStage(.syncing, store: store, now: deps.now)
+        deps.notify("helper_stage")
+        try await pipeline.syncOnly()
+
+        if needsDeepgram {
+            try writeHelperStage(.transcribing, store: store, now: deps.now)
+            deps.notify("helper_stage")
+            try await pipeline.transcribeNew()
+        }
+        if needsGemini {
+            try writeHelperStage(.classifying, store: store, now: deps.now)
+            deps.notify("helper_stage")
+            try await pipeline.classifyNew()
+        }
+        try await pipeline.relinkChanged()
+        try await pipeline.touchLastSync()
         deps.notify("last_sync_at")
         return 0
     } catch SourceClientError.unauthorised {
@@ -135,9 +154,15 @@ private func runClassifyPending(deps: HelperDeps) async -> Int32 {
         let lock = try SyncLock(path: deps.layout.lockURL())
         guard lock.tryAcquire() else {
             deps.logger.info("classify_skipped_already_running", source: nil)
-            return 0
+            return 75
         }
         let store = try deps.openStore(deps.layout.dbURL())
+        defer {
+            try? clearHelperStage(store: store, now: deps.now)
+            deps.notify("helper_stage")
+        }
+        try writeHelperStage(.classifying, store: store, now: deps.now)
+        deps.notify("helper_stage")
         guard let pipeline = try buildClassifyPipeline(deps: deps, store: store) else {
             return 3
         }
@@ -157,9 +182,15 @@ private func runClassifySource(_ sourceId: String, deps: HelperDeps) async -> In
         let lock = try SyncLock(path: deps.layout.lockURL())
         guard lock.tryAcquire() else {
             deps.logger.info("classify_skipped_already_running", source: sourceId)
-            return 0
+            return 75
         }
         let store = try deps.openStore(deps.layout.dbURL())
+        defer {
+            try? clearHelperStage(store: store, now: deps.now)
+            deps.notify("helper_stage")
+        }
+        try writeHelperStage(.classifying, store: store, now: deps.now)
+        deps.notify("helper_stage")
         guard let pipeline = try buildClassifyPipeline(deps: deps, store: store) else {
             return 3
         }
@@ -193,9 +224,15 @@ private func runTranscribePending(deps: HelperDeps) async -> Int32 {
         let lock = try SyncLock(path: deps.layout.lockURL())
         guard lock.tryAcquire() else {
             deps.logger.info("transcribe_skipped_already_running", source: nil)
-            return 0
+            return 75
         }
         let store = try deps.openStore(deps.layout.dbURL())
+        defer {
+            try? clearHelperStage(store: store, now: deps.now)
+            deps.notify("helper_stage")
+        }
+        try writeHelperStage(.transcribing, store: store, now: deps.now)
+        deps.notify("helper_stage")
         guard let pipeline = try buildTranscribePipeline(deps: deps, store: store) else {
             return 3
         }
@@ -215,9 +252,15 @@ private func runTranscribeSource(_ sourceId: String, deps: HelperDeps) async -> 
         let lock = try SyncLock(path: deps.layout.lockURL())
         guard lock.tryAcquire() else {
             deps.logger.info("transcribe_skipped_already_running", source: sourceId)
-            return 0
+            return 75
         }
         let store = try deps.openStore(deps.layout.dbURL())
+        defer {
+            try? clearHelperStage(store: store, now: deps.now)
+            deps.notify("helper_stage")
+        }
+        try writeHelperStage(.transcribing, store: store, now: deps.now)
+        deps.notify("helper_stage")
         guard let pipeline = try buildTranscribePipeline(deps: deps, store: store) else {
             return 3
         }

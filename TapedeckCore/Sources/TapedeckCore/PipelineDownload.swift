@@ -16,12 +16,21 @@ extension Pipeline {
         let pending = ((try? recordings.recordingsNeedingDownload()) ?? [])
             .filter { !shouldSkipAfterFailures(sourceId: $0.sourceId, stage: SyncStage.download) }
         let auth = AuthState()
+        try? writeHelperProgress(done: 0, total: pending.count, store: deps.store)
         await withTaskGroup(of: Void.self) { group in
-            var inflight = 0
+            var inflight = 0, done = 0
             for rec in pending {
-                if inflight >= maxConcurrency { await group.next(); inflight -= 1 }
+                if inflight >= maxConcurrency {
+                    await group.next(); inflight -= 1
+                    done += 1
+                    try? writeHelperProgress(done: done, total: pending.count, store: deps.store)
+                }
                 group.addTask { [self] in await self.downloadOne(rec, auth: auth) }
                 inflight += 1
+            }
+            while await group.next() != nil {
+                done += 1
+                try? writeHelperProgress(done: done, total: pending.count, store: deps.store)
             }
         }
         if await auth.didFail() { throw SourceClientError.unauthorised }

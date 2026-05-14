@@ -3,6 +3,10 @@
 import SwiftUI
 import TapedeckCore
 
+fileprivate func progressLabel(verb: String, done: Int, total: Int) -> String {
+    total > 0 ? "\(verb) \(done) of \(total)…" : "\(verb)…"
+}
+
 @main
 enum AppEntry {
     static func main() {
@@ -56,52 +60,57 @@ struct MainView: View {
                         .foregroundStyle(.secondary)
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    if appState.busy == .transcribePending {
+                    if appState.activity == .transcribePending {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
-                            Text("Transcribing…").foregroundStyle(.secondary)
+                            Text(progressLabel(verb: "Transcribing", done: appState.stageDone, total: appState.stageTotal)).foregroundStyle(.secondary)
                         }
                     } else {
                         Button("Transcribe") {
                             Task { await appState.transcribePending(reason: "ui_transcribe_pending") }
                         }
-                        .disabled(appState.busy != nil
+                        .disabled(appState.activity != nil
                                   || appState.statusCounts.toTranscribe == 0)
                         .help("\(appState.statusCounts.toTranscribe) recording\(appState.statusCounts.toTranscribe == 1 ? "" : "s") to transcribe")
                     }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    if appState.busy == .classifyPending {
+                    if appState.activity == .classifyPending {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
-                            Text("Classifying…").foregroundStyle(.secondary)
+                            Text(progressLabel(verb: "Classifying", done: appState.stageDone, total: appState.stageTotal)).foregroundStyle(.secondary)
                         }
                     } else {
                         Button("Classify") {
                             Task { await appState.classifyPending(reason: "ui_classify_pending") }
                         }
-                        .disabled(appState.busy != nil
+                        .disabled(appState.activity != nil
                                   || appState.statusCounts.toClassify == 0
                                   || appState.projects.isEmpty)
                         .help("\(appState.statusCounts.toClassify) recording\(appState.statusCounts.toClassify == 1 ? "" : "s") to classify")
                     }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    if appState.busy == .sync {
+                    if appState.activity == .sync {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
-                            Text("Syncing…").foregroundStyle(.secondary)
+                            Text(progressLabel(verb: "Syncing", done: appState.stageDone, total: appState.stageTotal)).foregroundStyle(.secondary)
                         }
                     } else {
                         Button("Sync now") {
                             Task { await appState.syncNow(reason: "ui_sync_now") }
                         }
-                        .disabled(appState.busy != nil)
+                        .disabled(appState.activity != nil)
                     }
                 }
             }
             .overlay(alignment: .top) {
                 if appState.tokenStatus == "expired" { ReAuthBanner() }
+            }
+            .overlay(alignment: .top) {
+                if let message = appState.transientMessage {
+                    TransientBanner(text: message)
+                }
             }
 
             PlayerBar()
@@ -118,5 +127,16 @@ struct SettingsView: View {
             UpdatesTab().tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
         }
         .frame(width: 560, height: 440)
+    }
+}
+
+private struct TransientBanner: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .padding(.vertical, 6).padding(.horizontal, 12)
+            .background(.thinMaterial, in: Capsule())
+            .padding(.top, 8)
+            .transition(.move(edge: .top).combined(with: .opacity))
     }
 }

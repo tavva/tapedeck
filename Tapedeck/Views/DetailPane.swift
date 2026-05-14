@@ -58,13 +58,13 @@ struct DetailPane: View {
                         Task { await appState.transcribeOne(sourceId: rec.sourceId,
                                                             reason: "ui_transcribe_one") }
                     }
-                    .disabled(appState.busy != nil
+                    .disabled(appState.activity != nil
                               || rec.audioDownloadedAt == nil)
                     Button(rec.classifiedAt == nil ? "Classify" : "Reclassify") {
                         Task { await appState.classifyOne(sourceId: rec.sourceId,
                                                           reason: "ui_classify_one") }
                     }
-                    .disabled(appState.busy != nil
+                    .disabled(appState.activity != nil
                               || rec.transcribedAt == nil
                               || appState.projects.isEmpty)
                 }

@@ -10,26 +10,32 @@ extension Pipeline {
         }
         let pending = ((try? recordings.recordingsNeedingTranscription()) ?? [])
             .filter { !shouldSkipAfterFailures(sourceId: $0.sourceId, stage: SyncStage.transcribe) }
-        await withTaskGroup(of: Void.self) { group in
-            var inflight = 0
-            for rec in pending {
-                if inflight >= maxConcurrency { await group.next(); inflight -= 1 }
-                group.addTask { [self] in await self.transcribeOneSilently(rec) }
-                inflight += 1
-            }
-        }
+        await runBatchTranscribe(pending: pending)
     }
 
     /// User-triggered bulk transcription. Ignores `auto_transcribe` and the
     /// `maxFailuresPerStage` filter — the click is itself the retry signal.
     public func transcribePending() async throws {
         let pending = (try? recordings.recordingsNeedingTranscription()) ?? []
+        await runBatchTranscribe(pending: pending)
+    }
+
+    func runBatchTranscribe(pending: [Recording]) async {
+        try? writeHelperProgress(done: 0, total: pending.count, store: deps.store)
         await withTaskGroup(of: Void.self) { group in
-            var inflight = 0
+            var inflight = 0, done = 0
             for rec in pending {
-                if inflight >= maxConcurrency { await group.next(); inflight -= 1 }
+                if inflight >= maxConcurrency {
+                    await group.next(); inflight -= 1
+                    done += 1
+                    try? writeHelperProgress(done: done, total: pending.count, store: deps.store)
+                }
                 group.addTask { [self] in await self.transcribeOneSilently(rec) }
                 inflight += 1
+            }
+            while await group.next() != nil {
+                done += 1
+                try? writeHelperProgress(done: done, total: pending.count, store: deps.store)
             }
         }
     }
@@ -40,8 +46,10 @@ extension Pipeline {
         guard let rec = try recordings.find(sourceId: sourceId) else {
             throw TranscribeError.unknownRecording(sourceId)
         }
+        try? writeHelperProgress(done: 0, total: 1, store: deps.store)
         do {
             try await performTranscribeOne(rec)
+            try? writeHelperProgress(done: 1, total: 1, store: deps.store)
         } catch {
             try? recordings.recordError(sourceId: sourceId, stage: .transcribe,
                                         at: deps.now(), message: "\(error)")
