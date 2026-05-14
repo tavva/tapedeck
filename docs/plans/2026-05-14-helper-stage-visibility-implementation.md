@@ -61,6 +61,15 @@ struct HelperStatusTests {
         #expect(try read(store, key: "helper_started_at") == "200")
     }
 
+    @Test func writeHelperStage_resetsProgressCounters() throws {
+        let store = try Store.openInMemory()
+        try writeHelperStage(.transcribing, store: store, now: { 100 })
+        try writeHelperProgress(done: 3, total: 7, store: store)
+        try writeHelperStage(.classifying, store: store, now: { 200 })
+        #expect(try read(store, key: "helper_stage_done") == "0")
+        #expect(try read(store, key: "helper_stage_total") == "0")
+    }
+
     @Test func writeHelperProgress_writesDoneAndTotal() throws {
         let store = try Store.openInMemory()
         try writeHelperProgress(done: 3, total: 7, store: store)
@@ -113,6 +122,16 @@ public func writeHelperStage(_ stage: HelperStage,
             INSERT INTO app_state(key, value) VALUES('helper_started_at', ?)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
         """, arguments: [ts])
+        // Reset progress counters atomically so the UI never sees the
+        // previous stage's "N of N" briefly attributed to the new stage.
+        try db.execute(sql: """
+            INSERT INTO app_state(key, value) VALUES('helper_stage_done', '0')
+            ON CONFLICT(key) DO UPDATE SET value = '0'
+        """)
+        try db.execute(sql: """
+            INSERT INTO app_state(key, value) VALUES('helper_stage_total', '0')
+            ON CONFLICT(key) DO UPDATE SET value = '0'
+        """)
     }
 }
 
@@ -130,15 +149,15 @@ public func writeHelperProgress(done: Int, total: Int, store: Store) throws {
 }
 
 public func clearHelperStage(store: Store, now: () -> Int64) throws {
+    // writeHelperStage already zeroes the progress counters in the same txn.
     try writeHelperStage(.idle, store: store, now: now)
-    try writeHelperProgress(done: 0, total: 0, store: store)
 }
 ```
 
 **Step 4: Run tests to verify they pass**
 
 Run: `swift test --package-path TapedeckCore --filter "HelperStatus"`
-Expected: PASS — 4 tests.
+Expected: PASS — 5 tests.
 
 **Step 5: Commit**
 
@@ -221,61 +240,7 @@ git commit -m "feat(pipeline): extract syncOnly() entry point"
 
 ---
 
-## Task 3: Promote `transcribeNew` / `classifyNew` to public
-
-`runFullCycle` is moving out of `Pipeline.runCycle` and will call the per-stage entry points directly. Make `transcribeNew()` and `classifyNew()` public so the helper can call them.
-
-**Files:**
-- Modify: `TapedeckCore/Sources/TapedeckCore/PipelineTranscribe.swift:6` (drop `internal` access on `transcribeNew`)
-- Modify: `TapedeckCore/Sources/TapedeckCore/PipelineClassify.swift:9` (drop `internal` access on `classifyNew`)
-
-**Step 1: Write the failing test (existence check)**
-
-Append to `PipelineTranscribeTests.swift`:
-
-```swift
-@Test func transcribeNew_isPublic() {
-    // Compile-only smoke: if access changes back to internal, this stops compiling.
-    let _: (Pipeline) -> () async throws -> Void = { p in p.transcribeNew }
-}
-```
-
-And a matching one in `PipelineClassifyTests.swift`:
-
-```swift
-@Test func classifyNew_isPublic() {
-    let _: (Pipeline) -> () async throws -> Void = { p in p.classifyNew }
-}
-```
-
-**Step 2: Run to verify failure**
-
-Run: `swift test --package-path TapedeckCore --filter "transcribeNew_isPublic"`
-Expected: FAIL — both `transcribeNew` and `classifyNew` are currently package-internal.
-
-**Step 3: Promote**
-
-In `PipelineTranscribe.swift` change `func transcribeNew()` to `public func transcribeNew()`.
-In `PipelineClassify.swift` change `func classifyNew()` to `public func classifyNew()`.
-
-**Step 4: Run to verify pass**
-
-Run: `swift test --package-path TapedeckCore --filter "isPublic"`
-Expected: PASS — 2 tests.
-
-**Step 5: Commit**
-
-```bash
-git add TapedeckCore/Sources/TapedeckCore/PipelineTranscribe.swift \
-        TapedeckCore/Sources/TapedeckCore/PipelineClassify.swift \
-        TapedeckCore/Tests/TapedeckCoreTests/PipelineTranscribeTests.swift \
-        TapedeckCore/Tests/TapedeckCoreTests/PipelineClassifyTests.swift
-git commit -m "feat(pipeline): expose transcribeNew/classifyNew as public"
-```
-
----
-
-## Task 4: Extract `runBatchTranscribe` helper
+## Task 3: Extract `runBatchTranscribe` helper
 
 `transcribeNew()` and `transcribePending()` duplicate the same TaskGroup-with-`maxConcurrency` loop. Extract it so progress instrumentation in the next task happens in one place.
 
@@ -345,7 +310,7 @@ git commit -m "refactor(pipeline): extract runBatchTranscribe"
 
 ---
 
-## Task 5: Progress writes in `runBatchTranscribe`
+## Task 4: Progress writes in `runBatchTranscribe`
 
 Tick `helper_stage_done` after each completion. Used by both `transcribeNew` and `transcribePending`.
 
@@ -421,7 +386,7 @@ git commit -m "feat(pipeline): progress counters in runBatchTranscribe"
 
 ---
 
-## Task 6: Progress writes in `runBatchClassify`
+## Task 5: Progress writes in `runBatchClassify`
 
 Same pattern as Task 5, for classify.
 
@@ -505,7 +470,7 @@ git commit -m "feat(pipeline): progress counters in runBatchClassify"
 
 ---
 
-## Task 7: Progress writes in `downloadNew`
+## Task 6: Progress writes in `downloadNew`
 
 Sync-stage progress is the download count. List/discover happen quickly before any items are known.
 
@@ -584,7 +549,7 @@ git commit -m "feat(pipeline): progress counters in downloadNew"
 
 ---
 
-## Task 8: Progress writes for single-recording paths
+## Task 7: Progress writes for single-recording paths
 
 `transcribeOne` and `classifyOne` should publish `(0, 1)` on entry and `(1, 1)` on success so the toolbar progress label is still meaningful.
 
@@ -661,7 +626,7 @@ git commit -m "feat(pipeline): single-recording progress (0,1)→(1,1)"
 
 ---
 
-## Task 9: `runFullCycle` stage orchestration
+## Task 8: `runFullCycle` stage orchestration
 
 Replace the monolithic `pipeline.runCycle()` call in `runFullCycle` with explicit stage transitions, each writing `helper_stage` and notifying.
 
@@ -671,7 +636,9 @@ Replace the monolithic `pipeline.runCycle()` call in `runFullCycle` with explici
 
 **Step 1: Write the failing test**
 
-Add a captured-notify helper near the top of `HelperRunnerTests.swift`:
+Then add a test that uses a fixture wired to capture notifications:
+
+Add two captures near the top of `HelperRunnerTests.swift`. `NotifyCapture` records the bare key sequence (reused by Task 9). `StageCapture` reads the DB value after each `"helper_stage"` notification so this test can assert the ordering:
 
 ```swift
 private final class NotifyCapture: @unchecked Sendable {
@@ -680,14 +647,31 @@ private final class NotifyCapture: @unchecked Sendable {
     func append(_ key: String) { lock.lock(); _keys.append(key); lock.unlock() }
     var keys: [String] { lock.lock(); defer { lock.unlock() }; return _keys }
 }
-```
 
-Then add a test that uses a fixture wired to capture notifications:
+private final class StageCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _stages: [String] = []
+    let store: Store
+    init(store: Store) { self.store = store }
+    func observe(_ key: String) {
+        guard key == "helper_stage" else { return }
+        let raw = (try? store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }) ?? nil
+        lock.lock(); _stages.append(raw ?? "?"); lock.unlock()
+    }
+    var stages: [String] { lock.lock(); defer { lock.unlock() }; return _stages }
+}
+```
 
 ```swift
 @Test func runFullCycle_writesStageTransitions_andEndsIdle() async throws {
-    let fx = try await makeFixture(secrets: ["tapedeck.deepgram.key:default": "dg",
-                                              "tapedeck.gemini.key:default": "gm"])
+    // JWT + Deepgram + Gemini secrets are all required for the full-cycle auto path.
+    let fx = try await makeFixture(secrets: [
+        "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+        "tapedeck.deepgram.key:default": "dg",
+        "tapedeck.gemini.key:default": "gm",
+    ])
     defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
 
     // Turn auto flags on so transcribe + classify stages run.
@@ -702,26 +686,44 @@ Then add a test that uses a fixture wired to capture notifications:
         """)
     }
 
-    let capture = NotifyCapture()
+    let capture = StageCapture(store: fx.store)
     var deps = fx.deps
-    deps.notify = { capture.append($0) }
+    deps.notify = { capture.observe($0) }
 
-    // Stub remote so syncOnly walks but yields no new recordings.
-    stubEmptyRemote(fx)
+    // No pending recordings: each stage runs against an empty pending set.
+    stubSourceEmptyList(fx)
 
     let status = await runHelper(.fullCycle, deps: deps)
     #expect(status == 0)
 
-    // helper_stage must have been written in order: syncing → transcribing → classifying → idle
-    let stages = try fx.store.read { db in
+    #expect(capture.stages == ["syncing", "transcribing", "classifying", "idle"])
+
+    let finalStage = try fx.store.read { db in
         try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
     }
-    #expect(stages == "idle")
-    #expect(capture.keys.filter { $0 == "helper_stage" }.count >= 4)
+    #expect(finalStage == "idle")
+}
+
+@Test func runFullCycle_clearsToIdle_evenWhenPipelineThrows() async throws {
+    // No URLProtocolStub handlers registered: any HTTP request the pipeline
+    // makes (discoverHost, listRemote, …) fails with URLError(.badURL),
+    // causing the cycle to throw. The helper must still write `idle` from
+    // its defer block.
+    let fx = try await makeFixture(secrets: [
+        "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+    ])
+    defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+
+    let status = await runHelper(.fullCycle, deps: fx.deps)
+    // Non-zero because the cycle failed; the exact code is whatever
+    // `cycle_failed` / `token_expired` maps to depending on the first failure.
+    #expect(status != 0)
+    let finalStage = try fx.store.read { db in
+        try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+    }
+    #expect(finalStage == "idle")
 }
 ```
-
-If `stubEmptyRemote` is not yet defined in the suite, add it: a stub that returns 200 with `[]` for the listing endpoint and a 200 for `discoverHost`.
 
 **Step 2: Run to verify failure**
 
@@ -785,8 +787,8 @@ private func runFullCycle(deps: HelperDeps) async -> Int32 {
             deps.notify("helper_stage")
             try await pipeline.classifyNew()
         }
-        try pipeline.relinkChanged()
-        try pipeline.touchLastSync()
+        try await pipeline.relinkChanged()
+        try await pipeline.touchLastSync()
         deps.notify("last_sync_at")
         return 0
     } catch SourceClientError.unauthorised {
@@ -805,7 +807,7 @@ private func runFullCycle(deps: HelperDeps) async -> Int32 {
 }
 ```
 
-Note: `relinkChanged()` and `touchLastSync()` were exposed as throwing internal methods inside `Pipeline`. If they are not currently public, mark them `public` (a one-line change in each).
+Note: `Pipeline` is declared as a `public actor` so callers from outside the actor (including this helper function) must `await` every call to its methods, even synchronous-looking ones like `relinkChanged()` and `touchLastSync()`. `relinkChanged()` is already `public`; `touchLastSync()` is package-internal but `HelperRunner.swift` lives in the same module, so no access change is needed.
 
 **Step 4: Run to verify pass**
 
@@ -823,7 +825,7 @@ git commit -m "feat(helper): runFullCycle stage transitions with deps.notify"
 
 ---
 
-## Task 10: Single-stage runners set/clear stage
+## Task 9: Single-stage runners set/clear stage
 
 `runTranscribePending`, `runTranscribeSource`, `runClassifyPending`, `runClassifySource` each set their stage on lock acquisition and clear in `defer`.
 
@@ -837,7 +839,10 @@ Append to `HelperRunnerTests.swift`:
 
 ```swift
 @Test func runTranscribePending_setsStageThenClears() async throws {
-    let fx = try await makeFixture(secrets: ["tapedeck.deepgram.key:default": "dg"])
+    let fx = try await makeFixture(secrets: [
+        "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+        "tapedeck.deepgram.key:default": "dg",
+    ])
     defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
     let capture = NotifyCapture()
     var deps = fx.deps
@@ -877,7 +882,7 @@ git commit -m "feat(helper): single-stage runners publish helper_stage"
 
 ---
 
-## Task 11: All five runners return 75 on lock contention
+## Task 10: All five runners return 75 on lock contention
 
 Existing skip paths return 0; switch them all to 75 (`EX_TEMPFAIL`).
 
@@ -963,7 +968,7 @@ git commit -m "feat(helper): exit 75 on lock contention (EX_TEMPFAIL)"
 
 ---
 
-## Task 12: `SyncCoordinator` — helperBusy error + dispatch mapping + `OperationRunner` protocol
+## Task 11: `SyncCoordinator` — helperBusy error + dispatch mapping + `OperationRunner` protocol
 
 Coordinator surfaces a typed `helperBusy(kind)` when the helper exits 75, and gains an `OperationRunner` protocol so `AppState` can be tested against a fake.
 
@@ -971,7 +976,7 @@ Coordinator surfaces a typed `helperBusy(kind)` when the helper exits 75, and ga
 - Modify: `Tapedeck/SyncCoordinator.swift`
 - Test: `Tapedeck/Tests/SyncCoordinatorTests.swift`
 
-**Step 1: Write the failing test**
+**Step 1: Write the failing tests**
 
 Append to `SyncCoordinatorTests.swift`:
 
@@ -986,6 +991,23 @@ func testDispatchThrowsHelperBusy_whenSpawnerReturns75() async {
     } catch {
         XCTFail("unexpected: \(error)")
     }
+}
+
+func testConcurrentSameKind_bothObserveHelperBusy() async {
+    // Spawner waits long enough that the second caller coalesces onto the first
+    // task. Without the mapping inside the shared task, only the originator would
+    // see helperBusy.
+    let coord = SyncCoordinator { _, _ in
+        try? await Task.sleep(for: .milliseconds(50))
+        return 75
+    }
+    async let a: Int32 = try coord.runOnce(reason: "a")
+    async let b: Int32 = try coord.runOnce(reason: "b")
+    var aBusy = false, bBusy = false
+    do { _ = try await a } catch SyncCoordinator.CoordinatorError.helperBusy { aBusy = true }
+    do { _ = try await b } catch SyncCoordinator.CoordinatorError.helperBusy { bBusy = true }
+    XCTAssertTrue(aBusy)
+    XCTAssertTrue(bBusy)
 }
 
 func testOperationRunnerConformance_forwardsToRunOnce() async throws {
@@ -1028,7 +1050,7 @@ enum CoordinatorError: Error, Equatable {
 }
 ```
 
-Update `dispatch` to map 75 → throw:
+Update `dispatch` so the 75 → throw mapping lives inside the shared task. This is essential: a second caller with the same `kind` coalesces onto the first task via `return try await cur.task.value`, so if the mapping is outside the task the second caller observes the raw `75` and silently succeeds.
 
 ```swift
 private func dispatch(_ kind: Kind, reason: String) async throws -> Int32 {
@@ -1037,12 +1059,14 @@ private func dispatch(_ kind: Kind, reason: String) async throws -> Int32 {
         throw CoordinatorError.otherOperationRunning(cur.kind)
     }
     let spawner = self.spawner
-    let task = Task { try await spawner(kind, reason) }
+    let task = Task { () throws -> Int32 in
+        let status = try await spawner(kind, reason)
+        if status == 75 { throw CoordinatorError.helperBusy(kind) }
+        return status
+    }
     current = (kind, task)
     defer { current = nil }
-    let status = try await task.value
-    if status == 75 { throw CoordinatorError.helperBusy(kind) }
-    return status
+    return try await task.value
 }
 ```
 
@@ -1060,7 +1084,7 @@ git commit -m "feat(coord): helperBusy error + OperationRunner protocol"
 
 ---
 
-## Task 13: `AppState` testability seam
+## Task 12: `AppState` testability seam
 
 Add an injectable initialiser. Production keeps `AppState()` as a convenience. The seam takes `layout`, optional `store`, `tokenReader`, `coordinator: any OperationRunner`, `lockProbe: (() -> Bool)?`, `polling`, and `transientDuration`.
 
@@ -1092,8 +1116,9 @@ final class AppStateTests: XCTestCase {
     }
 }
 
-@MainActor
-final class FakeRunner: OperationRunner {
+final class FakeRunner: OperationRunner, @unchecked Sendable {
+    // OperationRunner is a nonisolated `Sendable` protocol; fakes must NOT be
+    // @MainActor-isolated or they will fail Swift 6 protocol witness checks.
     let status: Int32
     init(status: Int32) { self.status = status }
     func run(_ kind: SyncCoordinator.Kind, reason: String) async throws -> Int32 {
@@ -1102,7 +1127,7 @@ final class FakeRunner: OperationRunner {
 }
 ```
 
-Add `AppStateTests.swift` to the test target in `project.yml` under the existing `Tests` group, then run `xcodegen generate`.
+`project.yml` already globs the entire `Tapedeck/Tests` directory into the test target, so the new file is picked up automatically. Run `xcodegen generate` to refresh `Tapedeck.xcodeproj` before invoking `xcodebuild`. The generated `Tapedeck.xcodeproj/` is gitignored — do not stage it.
 
 **Step 2: Run to verify failure**
 
@@ -1165,13 +1190,13 @@ Expected: PASS.
 **Step 5: Commit**
 
 ```bash
-git add Tapedeck/AppState.swift Tapedeck/Tests/AppStateTests.swift project.yml Tapedeck.xcodeproj
+git add Tapedeck/AppState.swift Tapedeck/Tests/AppStateTests.swift
 git commit -m "feat(appstate): injectable seam for tests"
 ```
 
 ---
 
-## Task 14: `AppState` reads helperStage + `activity` property
+## Task 13: `AppState` reads helperStage + `activity` property
 
 `refresh()` reads `helper_stage`, `helper_stage_done`, `helper_stage_total` from `app_state`. `activity` derives the equivalent `SyncCoordinator.Kind` for the toolbar.
 
@@ -1250,23 +1275,37 @@ var activity: SyncCoordinator.Kind? {
 }
 ```
 
-Extend `refresh()` to read the rows:
+Extend `refresh()` to read the rows in a single transaction so the stage and its progress counters always come from a consistent snapshot. Move the existing `last_sync_at` read into the same block.
 
 ```swift
-let helperStageRaw = try store.read { db in
-    try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+struct HelperSnapshot {
+    var stage: HelperStage
+    var done: Int
+    var total: Int
+    var lastSyncAt: Int64?
 }
-let done = try store.read { db in
-    try Int.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key='helper_stage_done'")
-} ?? 0
-let total = try store.read { db in
-    try Int.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key='helper_stage_total'")
-} ?? 0
+
+let snapshot: HelperSnapshot = try store.read { db in
+    let raw = try String.fetchOne(db,
+        sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+    let done = try Int.fetchOne(db,
+        sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key='helper_stage_done'") ?? 0
+    let total = try Int.fetchOne(db,
+        sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key='helper_stage_total'") ?? 0
+    let lastSync = try Int64.fetchOne(db,
+        sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key='last_sync_at'")
+    return HelperSnapshot(
+        stage: raw.flatMap(HelperStage.init(rawValue:)) ?? .idle,
+        done: done, total: total, lastSyncAt: lastSync)
+}
 // ... at the end, alongside existing assignments:
-self.helperStage = helperStageRaw.flatMap(HelperStage.init(rawValue:)) ?? .idle
-self.stageDone = done
-self.stageTotal = total
+self.helperStage = snapshot.stage
+self.stageDone = snapshot.done
+self.stageTotal = snapshot.total
+self.lastSyncAt = snapshot.lastSyncAt
 ```
+
+Delete the existing `let lastSyncAt = try store.read { ... }` block — the snapshot now owns it.
 
 **Step 4: Run to verify pass**
 
@@ -1282,7 +1321,7 @@ git commit -m "feat(appstate): read helper_stage rows + activity derivation"
 
 ---
 
-## Task 15: `transientMessage` + helperBusy banner catch
+## Task 14: `transientMessage` + helperBusy banner catch
 
 Surface lock-contention skips as a transient banner. Use the injected `transientDuration` so tests can run in milliseconds.
 
@@ -1308,8 +1347,7 @@ func testHelperBusyCatch_setsAndClearsTransientMessage() async throws {
     XCTAssertNil(state.transientMessage)
 }
 
-@MainActor
-final class ThrowingHelperBusyRunner: OperationRunner {
+final class ThrowingHelperBusyRunner: OperationRunner, @unchecked Sendable {
     let kind: SyncCoordinator.Kind
     init(kind: SyncCoordinator.Kind) { self.kind = kind }
     func run(_ k: SyncCoordinator.Kind, reason: String) async throws -> Int32 {
@@ -1370,7 +1408,7 @@ git commit -m "feat(appstate): transient banner on helperBusy"
 
 ---
 
-## Task 16: `clearStaleStageIfNoHelper` (init + refresh)
+## Task 15: `clearStaleStageIfNoHelper` (init + refresh)
 
 When `helper_stage` is non-idle but the lock probe returns `true` (no helper holds the lock), clear the stage. Run in `init` and in `refresh()` whenever `helperStage != .idle`.
 
@@ -1381,7 +1419,7 @@ When `helper_stage` is non-idle but the lock probe returns `true` (no helper hol
 **Step 1: Write the failing tests**
 
 ```swift
-func testStaleStageCleared_whenLockFree() async throws {
+func testStaleStageCleared_atInit_whenLockFree() throws {
     let store = try Store.openInMemory()
     try writeHelperStage(.transcribing, store: store, now: { 1 })
     let state = AppState(layout: .standard, store: store,
@@ -1390,6 +1428,24 @@ func testStaleStageCleared_whenLockFree() async throws {
                          lockProbe: { true },           // lock acquired = no helper
                          polling: false,
                          transientDuration: .milliseconds(10))
+    XCTAssertEqual(state.helperStage, .idle)
+    // DB should also be reset, not just the in-memory property.
+    let raw = try store.read { db in
+        try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+    }
+    XCTAssertEqual(raw, "idle")
+}
+
+func testStaleStageCleared_onRefresh_whenLockFree() async throws {
+    let store = try Store.openInMemory()
+    let state = AppState(layout: .standard, store: store,
+                         tokenReader: { true },
+                         coordinator: FakeRunner(status: 0),
+                         lockProbe: { true },
+                         polling: false,
+                         transientDuration: .milliseconds(10))
+    // Stage goes stale *after* init.
+    try writeHelperStage(.transcribing, store: store, now: { 2 })
     try await state.refresh()
     XCTAssertEqual(state.helperStage, .idle)
 }
@@ -1415,11 +1471,15 @@ Expected: FAIL — current `refresh` keeps stage as-is regardless of probe.
 
 **Step 3: Implement**
 
-Add to `AppState`:
+Add to `AppState`. The function reads the *current* DB stage rather than trusting cached state — `init` calls this before any `refresh()`, so `self.helperStage` is still `.idle` at that point.
 
 ```swift
 private func clearStaleStageIfNoHelper() {
-    guard helperStage != .idle else { return }
+    let raw = (try? store.read { db in
+        try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+    }) ?? nil
+    let stored = raw.flatMap(HelperStage.init(rawValue:)) ?? .idle
+    guard stored != .idle else { return }
     guard lockProbe() else { return }
     try? clearHelperStage(store: store, now: { Int64(Date().timeIntervalSince1970 * 1000) })
     self.helperStage = .idle
@@ -1430,7 +1490,7 @@ private func clearStaleStageIfNoHelper() {
 
 In `init`, call `clearStaleStageIfNoHelper()` right after the stored properties are assigned (before `startPolling`).
 
-In `refresh()`, after reading the rows and assigning `helperStage`/`stageDone`/`stageTotal`, call `clearStaleStageIfNoHelper()`.
+In `refresh()`, after the single-transaction read and the assignments to `helperStage`/`stageDone`/`stageTotal`, call `clearStaleStageIfNoHelper()`. The read inside `clearStaleStageIfNoHelper` is wasted in the refresh path but the cost is negligible (one indexed SELECT) and the alternative — a second variant of the function — adds branches that don't earn their keep.
 
 **Step 4: Run to verify pass**
 
@@ -1446,7 +1506,7 @@ git commit -m "feat(appstate): clearStaleStageIfNoHelper on init + refresh"
 
 ---
 
-## Task 17: UI wiring — toolbar, DetailPane, banner
+## Task 16: UI wiring — toolbar, DetailPane, banner
 
 The toolbar reads `activity` instead of `busy`. The label shows progress when `stageTotal > 0`. DetailPane's per-row Transcribe/Retranscribe disables on any activity. A new banner overlay shows `transientMessage`.
 
@@ -1497,7 +1557,19 @@ private struct TransientBanner: View {
 
 **Step 3: DetailPane disable wiring**
 
-In `Tapedeck/Views/DetailPane.swift`, find the Transcribe / Retranscribe button and change its `.disabled(...)` to also include `|| appState.activity != nil`. If it currently has only the per-row spinner condition, OR the new condition with the existing one (do not remove the per-row spin gating).
+In `Tapedeck/Views/DetailPane.swift`, update *both* per-row buttons to gate on `appState.activity != nil` instead of `appState.busy != nil` (lines 61 and 67):
+
+```swift
+Button(rec.transcribedAt == nil ? "Transcribe" : "Retranscribe") { ... }
+    .disabled(appState.activity != nil
+              || rec.audioDownloadedAt == nil)
+Button(rec.classifiedAt == nil ? "Classify" : "Reclassify") { ... }
+    .disabled(appState.activity != nil
+              || rec.transcribedAt == nil
+              || appState.projects.isEmpty)
+```
+
+Without updating the Classify/Reclassify button, launchd-helper activity still leaves the per-row Classify enabled even though the helper is currently classifying — exactly the bug this feature is meant to prevent.
 
 **Step 4: Build verify**
 
