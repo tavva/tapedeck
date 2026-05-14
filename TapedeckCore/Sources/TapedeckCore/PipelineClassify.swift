@@ -62,12 +62,21 @@ extension Pipeline {
             GeminiClient.ProjectHint(id: $0.id, name: $0.displayName, description: $0.description)
         }
         let threshold = (try? classifierThreshold()) ?? 0.7
+        try? writeHelperProgress(done: 0, total: pending.count, store: deps.store)
         await withTaskGroup(of: Void.self) { group in
-            var inflight = 0
+            var inflight = 0, done = 0
             for rec in pending {
-                if inflight >= maxConcurrency { await group.next(); inflight -= 1 }
+                if inflight >= maxConcurrency {
+                    await group.next(); inflight -= 1
+                    done += 1
+                    try? writeHelperProgress(done: done, total: pending.count, store: deps.store)
+                }
                 group.addTask { [self] in await self.classifyOneAndRecord(rec, hints: hints, threshold: threshold) }
                 inflight += 1
+            }
+            while await group.next() != nil {
+                done += 1
+                try? writeHelperProgress(done: done, total: pending.count, store: deps.store)
             }
         }
     }
