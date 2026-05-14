@@ -52,8 +52,9 @@ public func writeHelperProgress(done: Int, total: Int, store: Store) throws
 ```
 
 Each call writes the relevant `app_state` rows in a single transaction. The
-caller is responsible for posting `AppStateNotifier.post(changedKey: "helper_stage")`
-after writes (so the helper controls notify frequency).
+caller is responsible for posting via `deps.notify("helper_stage")` after
+writes (reusing the existing `HelperDeps.notify` seam so tests can observe
+transitions without hooking the system-wide `DistributedNotificationCenter`).
 
 ### Pipeline split
 
@@ -117,19 +118,19 @@ guard lock.tryAcquire() else {
 }
 defer {
     try? writeHelperStage(.idle, store: store, now: deps.now)
-    AppStateNotifier.post(changedKey: "helper_stage")
+    deps.notify("helper_stage")
 }
 
 try writeHelperStage(.syncing, store: store, now: deps.now)
-AppStateNotifier.post(changedKey: "helper_stage")
+deps.notify("helper_stage")
 try await pipeline.syncOnly()
 
 if autoFlag(...auto_transcribe) {
-    try writeHelperStage(.transcribing, ...); AppStateNotifier.post(...)
+    try writeHelperStage(.transcribing, ...); deps.notify("helper_stage")
     try await pipeline.transcribeNew()
 }
 if autoFlag(...auto_classify) {
-    try writeHelperStage(.classifying, ...); AppStateNotifier.post(...)
+    try writeHelperStage(.classifying, ...); deps.notify("helper_stage")
     try await pipeline.classifyNew()
 }
 try pipeline.relinkChanged()
@@ -157,9 +158,21 @@ enum CoordinatorError: Error, Equatable {
 }
 ```
 
-In `spawnHelper`'s `terminationHandler`, exit code 75 throws
-`helperBusy(kind)`. All other non-zero codes continue to surface as the
-helper's own logged failure (UI doesn't currently treat those specially).
+The mapping lives in `dispatch`, not `spawnHelper`. `Spawner` keeps its
+current `(Kind, String) async throws -> Int32` signature so injected test
+spawners can simply return raw status codes:
+
+```swift
+private func dispatch(_ kind: Kind, reason: String) async throws -> Int32 {
+    // ... existing in-process exclusion check ...
+    let status = try await spawner(kind, reason)
+    if status == 75 { throw CoordinatorError.helperBusy(kind) }
+    return status
+}
+```
+
+All other non-zero codes continue to surface as the helper's own logged
+failure (UI doesn't currently treat those specially).
 
 ### `AppState`
 
@@ -182,12 +195,55 @@ var activity: SyncCoordinator.Kind? {
 `refresh()` reads all four `helper_*` rows from `app_state` in the same read
 block it already uses for `last_sync_at`.
 
+### `AppState` testability seam
+
+The current `AppState.init()` opens `Layout.standard`, starts a 30 s timer,
+reads `KeychainStore.shared` synchronously, and calls `SyncCoordinator.shared`
+from inside `dispatch`, all of which make the new `AppStateTests` impossible
+without leaking real-system access. Add an injectable initialiser before the
+new tests:
+
+```swift
+protocol OperationRunner: Sendable {
+    func run(_ kind: SyncCoordinator.Kind, reason: String) async throws -> Int32
+}
+
+init(layout: Layout = .standard,
+     store: Store? = nil,
+     tokenReader: @escaping () -> Bool = AppState.defaultTokenReader,
+     coordinator: any OperationRunner = SyncCoordinator.shared,
+     lockProbe: (() -> Bool)? = nil,
+     polling: Bool = true,
+     transientDuration: Duration = .seconds(4))
+```
+
+Inside `init`, `lockProbe ?? { AppState.probeLock(at: layout.lockURL()) }`
+binds the default to the injected `layout`. `probeLock(at:)` is a small
+static helper that opens `SyncLock`, calls `tryAcquire()`, and lets the
+lock release on return.
+
+`SyncCoordinator` gains a conformance to `OperationRunner` whose `run` is
+a thin wrapper over the existing `dispatch`. `AppState.dispatch` calls
+`coordinator.run(kind, reason:)` instead of `SyncCoordinator.shared.runOnce`
+etc. The default `lockProbe` performs the `flock(LOCK_EX | LOCK_NB)` against
+`layout.lockURL()` and releases on return.
+
+The convenience initialiser used by production stays at `AppState()` — it
+forwards to this with defaults. Tests construct `AppState` with an
+in-memory store, a stubbed token reader, a fake `OperationRunner` whose
+`run` throws `SyncCoordinator.CoordinatorError.helperBusy(kind)` to
+exercise the banner path (the raw-status mapping lives in
+`SyncCoordinator.dispatch`, so a fake that returns `75` would not throw),
+a stub `lockProbe` closure that returns true/false per test, `polling:
+false`, and a short `transientDuration` so the auto-clear assertion runs
+in milliseconds.
+
 `dispatch` catches `helperBusy`:
 
 ```swift
 } catch SyncCoordinator.CoordinatorError.helperBusy(let kind) {
     transientMessage = "Another sync operation is in progress."
-    Task { try? await Task.sleep(for: .seconds(4)); transientMessage = nil }
+    Task { try? await Task.sleep(for: transientDuration); transientMessage = nil }
 }
 ```
 
@@ -221,20 +277,38 @@ but auto-dismissed by the `AppState` task.
 ### Stale `helper_stage` after a SIGKILL
 
 `flock` releases automatically when the holding process dies, so we can
-detect the stale-DB-row case by probing the lock. In `AppState.init`,
-before the first `refresh()`:
+detect the stale-DB-row case by probing the lock. The probe runs in two
+places:
+
+1. **`AppState.init`**, before the first `refresh()` — covers the case
+   where the app starts after a previous helper crash.
+2. **`refresh()`**, whenever `helperStage != .idle` — covers the case
+   where a helper is SIGKILL'd while the app is already running. Without
+   this, the 30-second poll and the notification channel both stay silent
+   (the dead helper can't post `"helper_stage"`), so the UI would stay
+   disabled indefinitely.
 
 ```swift
-let lock = try? SyncLock(path: Layout.standard.lockURL())
-if lock?.tryAcquire() == true {
+private func clearStaleStageIfNoHelper() {
+    guard lockProbe() else { return }
     // No helper is running; any non-idle stage is stale.
     try? clearHelperStage()
 }
-// lock is released when it goes out of scope
 ```
 
-This is the only mitigation. No timestamp-based fallback unless we observe
-flakiness in practice.
+The probe is the injected `lockProbe` closure described under the
+testability seam. Its default implementation opens a `SyncLock` at
+`layout.lockURL()`, calls `tryAcquire()`, and releases on return.
+`AppState` stores the injected `layout` so tests with a temp-directory
+`Layout` never touch the real app lock path. Tests stub `lockProbe`
+directly because `flock` does not contest same-process fds on macOS,
+so a "lock-held" scenario can't be faked by a second `open()` in the
+test process.
+
+The probe is cheap (one non-blocking `flock` syscall) and only fires in
+`refresh()` when the cached `helperStage != .idle`, so steady-state
+overhead is zero. No timestamp-based fallback unless we observe flakiness
+in practice.
 
 ### Notification storms
 
@@ -255,7 +329,8 @@ New `app_state` rows default to absent. `AppState` treats missing rows as
   - `runFullCycle` ends on `idle` even when the pipeline throws.
   - `runTranscribePending` / `runClassifyPending` set their stage on acquire
     and clear on exit.
-  - All four single-stage runners return exit code 75 when the lock is held.
+  - `runFullCycle` and all four single-stage runners return exit code 75
+    when the lock is already held.
 - `SyncCoordinatorTests`:
   - Spawner returning 75 throws `helperBusy(kind)`.
 - `PipelineTranscribeTests` / `PipelineClassifyTests` / `PipelineDownloadTests`:
@@ -263,7 +338,11 @@ New `app_state` rows default to absent. `AppState` treats missing rows as
     processing N items.
 - `AppStateTests`:
   - `activity` derives correctly from `helperStage` and `busy`.
-  - `transientMessage` is cleared by the 4-second task on `helperBusy`.
+  - `transientMessage` is set on `helperBusy` and cleared after the
+    configured `transientDuration`.
+  - `clearStaleStageIfNoHelper` clears a non-idle `helper_stage` when the
+    injected `lockProbe` returns `true`, and leaves it untouched when the
+    probe returns `false`.
 
 ## What we are not doing
 
