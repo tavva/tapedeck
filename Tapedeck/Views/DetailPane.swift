@@ -103,15 +103,14 @@ struct DetailPane: View {
         let updated = renameLabel(current, from: old, to: new)
         do {
             try updated.write(to: url, atomically: true, encoding: .utf8)
-            try appState.speakers.syncUsage(
-                sourceId: rec.sourceId,
-                labels: parseLabels(updated))
 
             // If a project-folder copy exists (linked recording), refresh it
             // so the downstream consumer sees the new labels. Same mechanism
             // PipelineTranscribe uses on retranscribe.
             if rec.linkedProjectId != nil {
                 try appState.recordingRepo.markPendingRelink(sourceId: rec.sourceId)
+                // Refresh now so the UI reflects the new labels immediately;
+                // syncNow will refresh again once the helper finishes relinking.
                 try await appState.refresh()
                 Task { await appState.syncNow(reason: "speaker_rename") }
             }
@@ -121,6 +120,9 @@ struct DetailPane: View {
         }
     }
 
+    /// URL of the on-disk transcript file. Derived from `sourceId`, `filename`,
+    /// and `startedAt` — all stable identity fields — so it remains correct
+    /// even when called via a stale `Recording` value captured into a closure.
     private func transcriptURL(for rec: Recording) -> URL {
         let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
         let dir = Layout.standard.audioDir(date: date)
