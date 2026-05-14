@@ -84,6 +84,21 @@ public final class Store: @unchecked Sendable {
                 INSERT INTO app_state(key, value) VALUES('schema_version', '\(TapedeckCore.schemaVersion)');
             """)
         }
+        m.registerMigration("v2_speakers") { db in
+            try db.execute(sql: """
+                CREATE TABLE speaker_usage (
+                    name        TEXT NOT NULL,
+                    source_id   TEXT NOT NULL REFERENCES recordings(source_id),
+                    used_at     INTEGER NOT NULL,
+                    PRIMARY KEY (name, source_id)
+                );
+
+                CREATE INDEX speaker_usage_source ON speaker_usage(source_id);
+
+                UPDATE app_state SET value = '\(TapedeckCore.schemaVersion)'
+                WHERE key = 'schema_version';
+            """)
+        }
         return m
     }()
 }

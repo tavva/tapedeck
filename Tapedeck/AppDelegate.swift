@@ -13,7 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return }
         let appState = self.appState
-        Task { try? await appState.refresh() }
+        Task {
+            try? await appState.refresh()
+            await appState.reconcileSpeakers()
+        }
         notifierObserver = AppStateNotifier.subscribe { key in
             Task { @MainActor in try? await appState.refresh(changedKey: key) }
         }

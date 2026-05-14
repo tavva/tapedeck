@@ -39,6 +39,7 @@ public actor Pipeline {
     let deps: Deps
     let recordings: RecordingRepository
     let projects: ProjectRepository
+    let speakers: SpeakerRepository
     let maxConcurrency = 3
     let maxFailuresPerStage = 3
 
@@ -46,6 +47,7 @@ public actor Pipeline {
         self.deps = deps
         self.recordings = RecordingRepository(store: deps.store)
         self.projects = ProjectRepository(store: deps.store)
+        self.speakers = SpeakerRepository(store: deps.store)
     }
 
     public func syncOnly() async throws {
