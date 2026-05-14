@@ -3,6 +3,7 @@
 
 import Testing
 import Foundation
+import GRDB
 @testable import TapedeckCore
 
 @Suite("PipelineClassify")
@@ -317,5 +318,46 @@ struct PipelineClassifyTests {
 
         let err = try fx.recordings.error(sourceId: rec.sourceId, stage: .classify)
         #expect(err?.attempt == 1)
+    }
+
+    // MARK: progress-counter tests
+
+    private struct PendingClassifyFixture {
+        let store: Store
+        let recordings: RecordingRepository
+        let sessionId: String
+        let pipeline: Pipeline
+    }
+
+    private func makeClassifyPendingFixture(pendingCount: Int) async throws -> PendingClassifyFixture {
+        let fx = try makeFixture()
+        try insertProject(fx)
+        stubGeminiHighConfidence(fx)
+        for i in 0..<pendingCount {
+            let sid = "rec-\(i)"
+            let r = Recording(sourceId: sid, filename: "Meeting \(i)",
+                              startedAt: 1, durationMs: 60_000, filesize: 8,
+                              audioExtension: "opus", lastSeenAt: 1)
+            try fx.recordings.upsertFromRemote(r)
+            try fx.recordings.setDownloaded(sourceId: sid, ext: "opus", at: 2)
+            try fx.recordings.setTranscribed(sourceId: sid, at: 3)
+            try writeTranscript(layout: fx.layout, recording: r, text: "hello \(i)")
+        }
+        return PendingClassifyFixture(store: fx.store, recordings: fx.recordings,
+                                      sessionId: fx.sessionId, pipeline: makePipeline(fx))
+    }
+
+    @Test func classifyPending_writesProgressDoneEqualsTotal() async throws {
+        let fx = try await makeClassifyPendingFixture(pendingCount: 2)
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        try await fx.pipeline.classifyPending()
+        let total = try fx.store.read { db in
+            try Int.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key = 'helper_stage_total'")
+        }
+        let done = try fx.store.read { db in
+            try Int.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key = 'helper_stage_done'")
+        }
+        #expect(total == 2)
+        #expect(done == 2)
     }
 }
