@@ -157,6 +157,12 @@ private func runClassifyPending(deps: HelperDeps) async -> Int32 {
             return 0
         }
         let store = try deps.openStore(deps.layout.dbURL())
+        defer {
+            try? clearHelperStage(store: store, now: deps.now)
+            deps.notify("helper_stage")
+        }
+        try writeHelperStage(.classifying, store: store, now: deps.now)
+        deps.notify("helper_stage")
         guard let pipeline = try buildClassifyPipeline(deps: deps, store: store) else {
             return 3
         }
@@ -179,6 +185,12 @@ private func runClassifySource(_ sourceId: String, deps: HelperDeps) async -> In
             return 0
         }
         let store = try deps.openStore(deps.layout.dbURL())
+        defer {
+            try? clearHelperStage(store: store, now: deps.now)
+            deps.notify("helper_stage")
+        }
+        try writeHelperStage(.classifying, store: store, now: deps.now)
+        deps.notify("helper_stage")
         guard let pipeline = try buildClassifyPipeline(deps: deps, store: store) else {
             return 3
         }
@@ -215,6 +227,12 @@ private func runTranscribePending(deps: HelperDeps) async -> Int32 {
             return 0
         }
         let store = try deps.openStore(deps.layout.dbURL())
+        defer {
+            try? clearHelperStage(store: store, now: deps.now)
+            deps.notify("helper_stage")
+        }
+        try writeHelperStage(.transcribing, store: store, now: deps.now)
+        deps.notify("helper_stage")
         guard let pipeline = try buildTranscribePipeline(deps: deps, store: store) else {
             return 3
         }
@@ -237,6 +255,12 @@ private func runTranscribeSource(_ sourceId: String, deps: HelperDeps) async -> 
             return 0
         }
         let store = try deps.openStore(deps.layout.dbURL())
+        defer {
+            try? clearHelperStage(store: store, now: deps.now)
+            deps.notify("helper_stage")
+        }
+        try writeHelperStage(.transcribing, store: store, now: deps.now)
+        deps.notify("helper_stage")
         guard let pipeline = try buildTranscribePipeline(deps: deps, store: store) else {
             return 3
         }

@@ -349,6 +349,74 @@ struct HelperRunnerTests {
         })
     }
 
+    @Test func runTranscribePending_setsStageThenClears() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.deepgram.key:default": "dg",
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let capture = NotifyCapture()
+        var deps = fx.deps
+        deps.notify = { capture.append($0) }
+        _ = await runHelper(.transcribePending, deps: deps)
+        let stage = try fx.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }
+        #expect(stage == "idle")
+        #expect(capture.keys.contains("helper_stage"))
+    }
+
+    @Test func runTranscribeSource_setsStageThenClears() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.deepgram.key:default": "dg",
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let capture = NotifyCapture()
+        var deps = fx.deps
+        deps.notify = { capture.append($0) }
+        _ = await runHelper(.transcribeSource("some-id"), deps: deps)
+        let stage = try fx.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }
+        #expect(stage == "idle")
+        #expect(capture.keys.contains("helper_stage"))
+    }
+
+    @Test func runClassifyPending_setsStageThenClears() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.gemini.key:default": "gm",
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let capture = NotifyCapture()
+        var deps = fx.deps
+        deps.notify = { capture.append($0) }
+        _ = await runHelper(.classifyPending, deps: deps)
+        let stage = try fx.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }
+        #expect(stage == "idle")
+        #expect(capture.keys.contains("helper_stage"))
+    }
+
+    @Test func runClassifySource_setsStageThenClears() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.gemini.key:default": "gm",
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let capture = NotifyCapture()
+        var deps = fx.deps
+        deps.notify = { capture.append($0) }
+        _ = await runHelper(.classifySource("some-id"), deps: deps)
+        let stage = try fx.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+        }
+        #expect(stage == "idle")
+        #expect(capture.keys.contains("helper_stage"))
+    }
+
     @Test func transcribeSource_refreshesProjectFolderCopy_forLinkedRecording() async throws {
         let fx = try await makeFixture(secrets: ["tapedeck.deepgram.key:default": "dg"])
         defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
