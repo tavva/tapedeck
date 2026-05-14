@@ -1,4 +1,4 @@
-// ABOUTME: Process-level exclusion via flock on sync.lock. Helper exits 0 if held.
+// ABOUTME: Process-level exclusion via flock on sync.lock. Helper exits 75 if held.
 // ABOUTME: Lock is released automatically when the holder process exits.
 
 import Foundation
