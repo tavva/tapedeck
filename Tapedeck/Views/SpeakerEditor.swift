@@ -81,11 +81,12 @@ struct SpeakerEditor: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 260)
                     .onSubmit { Task { await applyRename(label: label) } }
+                    .accessibilityLabel("Replacement name")
                 Button("Apply") {
                     Task { await applyRename(label: label) }
                 }
                 .disabled(!candidateChanged || validationError != nil)
-                Menu("▼") {
+                Menu {
                     let filtered = filteredKnown(matching: typed)
                     let inProject = filtered.filter(\.inCurrentProject)
                     let others = filtered.filter { !$0.inCurrentProject }
@@ -107,9 +108,12 @@ struct SpeakerEditor: View {
                         Text(known.isEmpty ? "No saved speakers yet"
                                            : "No matches").disabled(true)
                     }
+                } label: {
+                    Image(systemName: "chevron.down")
                 }
                 .menuStyle(.borderlessButton)
                 .frame(width: 30)
+                .accessibilityLabel("Saved speakers")
             }
             // Live error: only surface once the user has typed something that
             // diverges from the original label and is invalid.
@@ -139,8 +143,10 @@ struct SpeakerEditor: View {
             return
         }
         await onApply(label, candidate)
-        // editText is cleared by DetailPane re-reading the transcript, which
-        // changes the parsed `labels` set and re-renders this view.
+        // On success, DetailPane reloads the transcript, the parsed `labels`
+        // set changes, and SwiftUI re-renders this view — the orphaned
+        // editText entry stops being read. On failure, DetailPane logs the
+        // error and editText keeps the candidate so the user can retry.
     }
 
     private func binding(for label: String) -> Binding<String> {
@@ -160,7 +166,7 @@ struct SpeakerEditor: View {
         return known.filter { $0.name.lowercased().hasPrefix(lower) }
     }
 
-    func reload() {
+    private func reload() {
         known = (try? appState.speakers.knownSpeakers(for: projectId)) ?? []
     }
 }
