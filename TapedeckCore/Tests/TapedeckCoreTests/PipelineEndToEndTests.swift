@@ -3,6 +3,7 @@
 
 import Testing
 import Foundation
+import GRDB
 @testable import TapedeckCore
 
 @Suite("Pipeline end-to-end")
@@ -21,7 +22,14 @@ struct PipelineEndToEndTests {
         return try! JSONSerialization.data(withJSONObject: envelope)
     }
 
-    @Test func freshCycleProducesArtefactsAndLinks() async throws {
+    struct EndToEndFixture {
+        let layout: Layout
+        let store: Store
+        let pipeline: Pipeline
+        let sid: String
+    }
+
+    private func makeEndToEndFixture() throws -> EndToEndFixture {
         let layout = makeLayout()
         let store = try Store.openInMemory()
         let projects = ProjectRepository(store: store)
@@ -37,7 +45,6 @@ struct PipelineEndToEndTests {
         }
 
         let (session, sid) = URLProtocolStub.makeSession()
-        defer { URLProtocolStub.clear(sessionId: sid) }
         let audioBytes = Data(repeating: 0x42, count: 8)
 
         URLProtocolStub.register(sessionId: sid, "list", matching: { req in
@@ -92,6 +99,39 @@ struct PipelineEndToEndTests {
             gemini: GeminiClient(apiKey: "gm", session: session),
             logger: DiscardingLog(),
             now: now))
+        return EndToEndFixture(layout: layout, store: store, pipeline: pipeline, sid: sid)
+    }
+
+    static func fetchAllRecordings(_ store: Store) throws -> [Recording] {
+        try store.read { db in
+            try Row.fetchAll(db, sql: "SELECT * FROM recordings ORDER BY started_at").map { row in
+                Recording(
+                    sourceId: row["source_id"],
+                    filename: row["filename"],
+                    startedAt: row["started_at"],
+                    durationMs: row["duration_ms"],
+                    filesize: row["filesize"],
+                    audioExtension: row["audio_extension"],
+                    audioDownloadedAt: row["audio_downloaded_at"],
+                    transcribedAt: row["transcribed_at"],
+                    projectId: row["project_id"],
+                    classificationConfidence: row["classification_confidence"],
+                    classificationReasoning: row["classification_reasoning"],
+                    classifiedAt: row["classified_at"],
+                    classifiedBy: row["classified_by"],
+                    projectLinkState: Recording.LinkState(rawValue: row["project_link_state"]) ?? .none,
+                    linkedProjectId: row["linked_project_id"],
+                    lastSeenAt: row["last_seen_at"])
+            }
+        }
+    }
+
+    @Test func freshCycleProducesArtefactsAndLinks() async throws {
+        let fx = try makeEndToEndFixture()
+        defer { URLProtocolStub.clear(sessionId: fx.sid) }
+        let layout = fx.layout
+        let store = fx.store
+        let pipeline = fx.pipeline
 
         try await pipeline.runCycle()
 
@@ -189,5 +229,18 @@ struct PipelineEndToEndTests {
         } catch Pipeline.PipelineError.tokenExpired {
             // expected
         }
+    }
+
+    @Test func syncOnly_listsAndDownloads_butDoesNotTranscribeOrClassify() async throws {
+        // Reuse the existing end-to-end fixture builder. After syncOnly the recording
+        // must have audioDownloadedAt set, but transcribedAt and projectId should remain
+        // nil even when API keys are present.
+        let fx = try makeEndToEndFixture()
+        defer { URLProtocolStub.clear(sessionId: fx.sid) }
+        try await fx.pipeline.syncOnly()
+        let recs = try Self.fetchAllRecordings(fx.store)
+        #expect(recs.first?.audioDownloadedAt != nil)
+        #expect(recs.first?.transcribedAt == nil)
+        #expect(recs.first?.projectId == nil)
     }
 }
