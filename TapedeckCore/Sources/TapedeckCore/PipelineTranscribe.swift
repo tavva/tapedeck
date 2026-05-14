@@ -46,8 +46,10 @@ extension Pipeline {
         guard let rec = try recordings.find(sourceId: sourceId) else {
             throw TranscribeError.unknownRecording(sourceId)
         }
+        try? writeHelperProgress(done: 0, total: 1, store: deps.store)
         do {
             try await performTranscribeOne(rec)
+            try? writeHelperProgress(done: 1, total: 1, store: deps.store)
         } catch {
             try? recordings.recordError(sourceId: sourceId, stage: .transcribe,
                                         at: deps.now(), message: "\(error)")

@@ -360,4 +360,37 @@ struct PipelineClassifyTests {
         #expect(total == 2)
         #expect(done == 2)
     }
+
+    private struct OneClassifyFixture {
+        let store: Store
+        let recordings: RecordingRepository
+        let sessionId: String
+        let recordingId: String
+        let pipeline: Pipeline
+    }
+
+    private func makeClassifyOneFixture() async throws -> OneClassifyFixture {
+        let fx = try makeFixture()
+        try insertProject(fx)
+        stubGeminiHighConfidence(fx)
+        let rec = try insertRecording(fx)
+        try writeTranscript(layout: fx.layout, recording: rec, text: "hello")
+        return OneClassifyFixture(store: fx.store, recordings: fx.recordings,
+                                  sessionId: fx.sessionId, recordingId: rec.sourceId,
+                                  pipeline: makePipeline(fx))
+    }
+
+    @Test func classifyOne_writes_0of1_then_1of1_onSuccess() async throws {
+        let fx = try await makeClassifyOneFixture()
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        try await fx.pipeline.classifyOne(sourceId: fx.recordingId)
+        let done = try fx.store.read { db in
+            try Int.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key = 'helper_stage_done'")
+        }
+        let total = try fx.store.read { db in
+            try Int.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key = 'helper_stage_total'")
+        }
+        #expect(done == 1)
+        #expect(total == 1)
+    }
 }

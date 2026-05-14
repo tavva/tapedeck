@@ -41,8 +41,10 @@ extension Pipeline {
             GeminiClient.ProjectHint(id: $0.id, name: $0.displayName, description: $0.description)
         }
         let threshold = (try? classifierThreshold()) ?? 0.7
+        try? writeHelperProgress(done: 0, total: 1, store: deps.store)
         do {
             try await performClassifyOne(rec, hints: hints, threshold: threshold)
+            try? writeHelperProgress(done: 1, total: 1, store: deps.store)
         } catch {
             try? recordings.recordError(sourceId: sourceId, stage: .classify,
                                         at: deps.now(), message: "\(error)")
