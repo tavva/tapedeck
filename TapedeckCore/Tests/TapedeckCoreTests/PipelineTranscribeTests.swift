@@ -398,4 +398,19 @@ struct PipelineTranscribeTests {
 
         #expect(try fx.recordings.recordingsNeedingTranscription().isEmpty)
     }
+
+    @Test func transcribeOne_clearsSpeakerUsageRows() async throws {
+        let fx = try makeFixture()
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let rec = try insertDownloadedRecording(fx)
+        let speakers = SpeakerRepository(store: fx.store)
+        try speakers.syncUsage(sourceId: rec.sourceId, labels: ["Ben", "Alice"])
+        #expect(try !speakers.knownSpeakers(for: nil).isEmpty)
+        stubDeepgramOK(fx)
+
+        try await makePipelineWith(fx).transcribeOne(sourceId: rec.sourceId)
+
+        let names = try speakers.knownSpeakers(for: nil).map(\.name)
+        #expect(names.isEmpty)
+    }
 }
