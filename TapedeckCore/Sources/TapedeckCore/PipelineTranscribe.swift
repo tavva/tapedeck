@@ -21,12 +21,21 @@ extension Pipeline {
     }
 
     func runBatchTranscribe(pending: [Recording]) async {
+        try? writeHelperProgress(done: 0, total: pending.count, store: deps.store)
         await withTaskGroup(of: Void.self) { group in
-            var inflight = 0
+            var inflight = 0, done = 0
             for rec in pending {
-                if inflight >= maxConcurrency { await group.next(); inflight -= 1 }
+                if inflight >= maxConcurrency {
+                    await group.next(); inflight -= 1
+                    done += 1
+                    try? writeHelperProgress(done: done, total: pending.count, store: deps.store)
+                }
                 group.addTask { [self] in await self.transcribeOneSilently(rec) }
                 inflight += 1
+            }
+            while await group.next() != nil {
+                done += 1
+                try? writeHelperProgress(done: done, total: pending.count, store: deps.store)
             }
         }
     }

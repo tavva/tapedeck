@@ -3,6 +3,7 @@
 
 import Testing
 import Foundation
+import GRDB
 @testable import TapedeckCore
 
 @Suite("PipelineTranscribe")
@@ -402,5 +403,48 @@ struct PipelineTranscribeTests {
     @Test func runBatchTranscribe_isInternal() {
         // Compile-only smoke; ensures the helper exists and stays in-package.
         let _: (Pipeline) -> ([Recording]) async -> Void = { p in p.runBatchTranscribe }
+    }
+
+    // MARK: progress-counter tests
+
+    private struct PendingFixture {
+        let store: Store
+        let recordings: RecordingRepository
+        let sessionId: String
+        let pipeline: Pipeline
+    }
+
+    private func makeTranscribePendingFixture(pendingCount: Int) async throws -> PendingFixture {
+        let fx = try makeFixture()
+        stubDeepgramOK(fx)
+        for i in 0..<pendingCount {
+            let sid = "rec-\(i)"
+            let r = Recording(sourceId: sid, filename: "Meeting \(i)",
+                              startedAt: 1, durationMs: 60_000, filesize: 4,
+                              audioExtension: "opus", lastSeenAt: 1)
+            try fx.recordings.upsertFromRemote(r)
+            try fx.recordings.setDownloaded(sourceId: sid, ext: "opus", at: 2)
+            let date = Date(timeIntervalSince1970: TimeInterval(r.startedAt) / 1000)
+            let dir = fx.layout.audioDir(date: date)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let stem = fx.layout.stem(sourceId: sid, title: r.filename)
+            try Data([0, 1, 2, 3]).write(to: dir.appending(path: "\(stem).opus"))
+        }
+        return PendingFixture(store: fx.store, recordings: fx.recordings,
+                              sessionId: fx.sessionId, pipeline: makePipelineWith(fx))
+    }
+
+    @Test func transcribePending_writesProgressDoneEqualsTotal() async throws {
+        let fx = try await makeTranscribePendingFixture(pendingCount: 2)
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        try await fx.pipeline.transcribePending()
+        let total = try fx.store.read { db in
+            try Int.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key = 'helper_stage_total'")
+        }
+        let done = try fx.store.read { db in
+            try Int.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key = 'helper_stage_done'")
+        }
+        #expect(total == 2)
+        #expect(done == 2)
     }
 }
