@@ -18,6 +18,49 @@ final class AppStateTests: XCTestCase {
                              transientDuration: .milliseconds(10))
         XCTAssertEqual(state.recordings.count, 0)
     }
+
+    func testActivity_prefersHelperStageOverBusy() async throws {
+        let store = try Store.openInMemory()
+        try writeHelperStage(.transcribing, store: store, now: { 1 })
+        let state = AppState(layout: .standard, store: store,
+                             tokenReader: { true },
+                             coordinator: FakeRunner(status: 0),
+                             lockProbe: { false },
+                             polling: false,
+                             transientDuration: .milliseconds(10))
+        try await state.refresh()
+        XCTAssertEqual(state.helperStage, .transcribing)
+        XCTAssertEqual(state.activity, .transcribePending)
+    }
+
+    func testActivity_fallsBackToBusy_whenStageIdle() async throws {
+        let store = try Store.openInMemory()
+        try clearHelperStage(store: store, now: { 1 })
+        let state = AppState(layout: .standard, store: store,
+                             tokenReader: { true },
+                             coordinator: FakeRunner(status: 0),
+                             lockProbe: { false },
+                             polling: false,
+                             transientDuration: .milliseconds(10))
+        try await state.refresh()
+        state.busy = .sync
+        XCTAssertEqual(state.activity, .sync)
+    }
+
+    func testProgress_readsDoneAndTotal() async throws {
+        let store = try Store.openInMemory()
+        try writeHelperStage(.transcribing, store: store, now: { 1 })
+        try writeHelperProgress(done: 3, total: 7, store: store)
+        let state = AppState(layout: .standard, store: store,
+                             tokenReader: { true },
+                             coordinator: FakeRunner(status: 0),
+                             lockProbe: { false },
+                             polling: false,
+                             transientDuration: .milliseconds(10))
+        try await state.refresh()
+        XCTAssertEqual(state.stageDone, 3)
+        XCTAssertEqual(state.stageTotal, 7)
+    }
 }
 
 final class FakeRunner: OperationRunner, @unchecked Sendable {

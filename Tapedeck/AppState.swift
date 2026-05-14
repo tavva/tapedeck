@@ -34,6 +34,25 @@ final class AppState {
     var selectedProject: String? = "all"
     var selectedSourceId: String? = nil
     var busy: SyncCoordinator.Kind? = nil
+    var helperStage: HelperStage = .idle
+    var stageDone: Int = 0
+    var stageTotal: Int = 0
+
+    var activity: SyncCoordinator.Kind? {
+        switch helperStage {
+        case .syncing:      return .sync
+        case .transcribing: return .transcribePending
+        case .classifying:  return .classifyPending
+        case .idle:         return busy
+        }
+    }
+
+    struct HelperSnapshot {
+        var stage: HelperStage
+        var done: Int
+        var total: Int
+        var lastSyncAt: Int64?
+    }
 
     private let layout: Layout
     private let store: Store
@@ -94,14 +113,27 @@ final class AppState {
         case (true, "expired"): resolved = "expired"
         case (true, _):         resolved = "ok"
         }
-        let lastSyncAt = try store.read { db in
-            try Int64.fetchOne(db, sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key = 'last_sync_at'")
+        let snapshot: HelperSnapshot = try store.read { db in
+            let raw = try String.fetchOne(db,
+                sql: "SELECT value FROM app_state WHERE key='helper_stage'")
+            let done = try Int.fetchOne(db,
+                sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key='helper_stage_done'") ?? 0
+            let total = try Int.fetchOne(db,
+                sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key='helper_stage_total'") ?? 0
+            let lastSync = try Int64.fetchOne(db,
+                sql: "SELECT CAST(value AS INTEGER) FROM app_state WHERE key='last_sync_at'")
+            return HelperSnapshot(
+                stage: raw.flatMap(HelperStage.init(rawValue:)) ?? .idle,
+                done: done, total: total, lastSyncAt: lastSync)
         }
         self.projects = projects
         self.recordings = recordings
         self.errors = errors
         self.tokenStatus = resolved
-        self.lastSyncAt = lastSyncAt
+        self.helperStage = snapshot.stage
+        self.stageDone = snapshot.done
+        self.stageTotal = snapshot.total
+        self.lastSyncAt = snapshot.lastSyncAt
     }
 
     func clearTokenStatus() throws {
