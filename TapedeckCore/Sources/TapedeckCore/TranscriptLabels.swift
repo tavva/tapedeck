@@ -67,6 +67,10 @@ private func splitParagraphs(_ text: String) -> (paragraphs: [String], separator
 /// Rewrites every paragraph whose leading label is `old` so its label becomes
 /// `new`. Splits on blank-line paragraph boundaries; the `[old]` token must
 /// be the very first non-whitespace content of the paragraph to match.
+///
+/// `new` is inserted verbatim — callers must validate that it is non-empty and
+/// contains no `[`, `]`, or newline characters. Invalid names produce a
+/// malformed transcript that `parseLabels` will silently drop.
 public func renameLabel(_ transcript: String, from old: String, to new: String) -> String {
     let oldToken = "[\(old)]"
     let newToken = "[\(new)]"
