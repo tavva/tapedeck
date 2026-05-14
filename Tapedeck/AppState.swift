@@ -37,6 +37,7 @@ final class AppState {
     var helperStage: HelperStage = .idle
     var stageDone: Int = 0
     var stageTotal: Int = 0
+    var transientMessage: String? = nil
 
     var activity: SyncCoordinator.Kind? {
         switch helperStage {
@@ -223,6 +224,13 @@ final class AppState {
         defer { busy = nil }
         do {
             _ = try await run()
+        } catch SyncCoordinator.CoordinatorError.helperBusy {
+            transientMessage = "Another sync operation is in progress."
+            let duration = transientDuration
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: duration)
+                self?.transientMessage = nil
+            }
         } catch SyncCoordinator.CoordinatorError.otherOperationRunning(let other) {
             NSLog("SyncCoordinator: \(kind) requested while \(other) running")
         } catch {

@@ -61,6 +61,21 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.stageDone, 3)
         XCTAssertEqual(state.stageTotal, 7)
     }
+
+    func testHelperBusyCatch_setsAndClearsTransientMessage() async throws {
+        let store = try Store.openInMemory()
+        let runner = ThrowingHelperBusyRunner(kind: .transcribePending)
+        let state = AppState(layout: .standard, store: store,
+                             tokenReader: { true },
+                             coordinator: runner,
+                             lockProbe: { false },
+                             polling: false,
+                             transientDuration: .milliseconds(20))
+        await state.transcribePending(reason: "test")
+        XCTAssertNotNil(state.transientMessage)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertNil(state.transientMessage)
+    }
 }
 
 final class FakeRunner: OperationRunner, @unchecked Sendable {
@@ -70,5 +85,13 @@ final class FakeRunner: OperationRunner, @unchecked Sendable {
     init(status: Int32) { self.status = status }
     func run(_ kind: SyncCoordinator.Kind, reason: String) async throws -> Int32 {
         status
+    }
+}
+
+final class ThrowingHelperBusyRunner: OperationRunner, @unchecked Sendable {
+    let kind: SyncCoordinator.Kind
+    init(kind: SyncCoordinator.Kind) { self.kind = kind }
+    func run(_ k: SyncCoordinator.Kind, reason: String) async throws -> Int32 {
+        throw SyncCoordinator.CoordinatorError.helperBusy(kind)
     }
 }
