@@ -14,10 +14,12 @@ ARCHIVE_PATH="$BUILD_DIR/Tapedeck.xcarchive"
 EXPORT_PATH="$BUILD_DIR/export"
 DMG_PATH="$BUILD_DIR/Tapedeck-${VERSION}.dmg"
 NOTARIZE_PROFILE="${NOTARIZE_PROFILE:-countdown-notarize}"
+REPO_ROOT=$(git rev-parse --show-toplevel)
+RELEASE_REMOTE="${RELEASE_REMOTE:-https://github.com/tavva/tapedeck.git}"
 
 cleanup_generated_entitlements() {
-  /usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" Tapedeck/Tapedeck.entitlements 2>/dev/null || true
-  /usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" TapedeckSyncHelper/TapedeckSyncHelper.entitlements 2>/dev/null || true
+  /usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" "$REPO_ROOT/Tapedeck/Tapedeck.entitlements" 2>/dev/null || true
+  /usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" "$REPO_ROOT/TapedeckSyncHelper/TapedeckSyncHelper.entitlements" 2>/dev/null || true
 }
 trap cleanup_generated_entitlements EXIT
 
@@ -164,11 +166,12 @@ CLOSE_LINE=$(grep -n '</channel>' "$APPCAST_FILE" | head -1 | cut -d: -f1)
 mv "$APPCAST_FILE.tmp" "$APPCAST_FILE"
 rm "$ITEM_FILE"
 
-cd "$APPCAST_DIR"
-git add appcast.xml
-git commit -m "Update appcast for ${TAG}"
-git push origin gh-pages
-cd -
+(
+  cd "$APPCAST_DIR"
+  git add appcast.xml
+  git commit -m "Update appcast for ${TAG}"
+  git push "$RELEASE_REMOTE" gh-pages
+)
 git worktree remove "$APPCAST_DIR"
 
 # Step 14: push the exact release commit and tag, then create the GitHub release.
@@ -179,7 +182,7 @@ if [ "$CURRENT_BRANCH" = "HEAD" ]; then
 fi
 RELEASE_SHA=$(git rev-parse HEAD)
 git tag -a "$TAG" -m "Tapedeck $TAG"
-git push origin "$CURRENT_BRANCH" "$TAG"
+git push "$RELEASE_REMOTE" "$CURRENT_BRANCH" "$TAG"
 
 echo "==> Creating GitHub release..."
 gh release create "$TAG" "$DMG_PATH" \
