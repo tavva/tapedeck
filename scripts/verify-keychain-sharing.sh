@@ -5,7 +5,7 @@ set -euo pipefail
 APP="${1:?path/to/Tapedeck.app}"
 SENTINEL=$(uuidgen)
 UI="$APP/Contents/MacOS/Tapedeck"
-HELPER="$APP/Contents/MacOS/TapedeckSyncHelper"
+HELPER="$APP/Contents/Helpers/TapedeckSyncHelper.app/Contents/MacOS/TapedeckSyncHelper"
 
 "$UI" --write-keychain-sentinel "$SENTINEL"
 read_back=$("$HELPER" --read-keychain-sentinel)

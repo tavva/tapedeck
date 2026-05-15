@@ -88,7 +88,7 @@ actor SyncCoordinator {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Int32, Error>) in
             let proc = Process()
             proc.executableURL = Bundle.main.bundleURL
-                .appending(path: "Contents/MacOS/TapedeckSyncHelper")
+                .appending(path: "Contents/Helpers/TapedeckSyncHelper.app/Contents/MacOS/TapedeckSyncHelper")
             proc.arguments = kind.helperArgs
             proc.environment = ProcessInfo.processInfo.environment
                 .merging(["TAPEDECK_SYNC_REASON": reason]) { _, new in new }

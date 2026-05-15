@@ -12,7 +12,8 @@ enum LaunchAgent {
     }
 
     static func installIfNeeded() {
-        let helper = Bundle.main.bundleURL.appending(path: "Contents/MacOS/TapedeckSyncHelper")
+        let helper = Bundle.main.bundleURL
+            .appending(path: "Contents/Helpers/TapedeckSyncHelper.app/Contents/MacOS/TapedeckSyncHelper")
         let dict: [String: Any] = [
             "Label": label,
             "ProgramArguments": [helper.path],
