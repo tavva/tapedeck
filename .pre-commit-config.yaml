@@ -7,3 +7,11 @@ repos:
     hooks:
       - id: gitleaks
         stages: [pre-push]
+  - repo: local
+    hooks:
+      - id: github-actions-checks
+        name: Run GitHub Actions checks
+        entry: scripts/check-ci.sh
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
