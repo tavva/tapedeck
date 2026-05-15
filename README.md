@@ -183,10 +183,16 @@ xcodegen generate
 open Tapedeck.xcodeproj
 ```
 
-Run the core test suite:
+Install the pre-push checks:
 
 ```bash
-swift test --package-path TapedeckCore
+pre-commit install --hook-type pre-push
+```
+
+Run the same checks as GitHub Actions:
+
+```bash
+./scripts/check-ci.sh
 ```
 
 Build an ad-hoc local app:
