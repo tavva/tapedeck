@@ -2,15 +2,5 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
     <title>Tapedeck Updates</title>
-    <item>
-      <title>Version 0.1.0</title>
-      <pubDate>Fri, 15 May 2026 06:29:29 +0100</pubDate>
-      <sparkle:version>0.1.0</sparkle:version>
-      <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
-      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/tavva/tapedeck/releases/download/v0.1.0/Tapedeck-0.1.0.dmg"
-                 type="application/octet-stream"
-                 sparkle:edSignature="FW7wHC8sjcFXQkjgUMvxZHcX0pdSyGjICDkiLFXYsIw16nqLM1iMmsggXSt+3kO12d0iPZ0+Rgg+91z7YCcMDA==" length="7796195" />
-    </item>
   </channel>
 </rss>
