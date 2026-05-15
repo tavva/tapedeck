@@ -182,7 +182,7 @@ extension SourceClient {
     }
 
     /// Streams `url` to `target.part`, then renames atomically. Returns the extension parsed from url.path.
-    public func download(from url: URL, target: URL, fileManager: FileManager = .default) async throws -> String {
+    public nonisolated func download(from url: URL, target: URL, fileManager: FileManager = .default) async throws -> String {
         if fileManager.fileExists(atPath: target.path) {
             let ext = url.pathExtension.lowercased()
             return ext.isEmpty ? "audio" : ext
