@@ -1,14 +1,24 @@
-# Tapedeck
+<p align="center">
+  <img src="Tapedeck/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png" width="128" height="128" alt="Tapedeck app icon">
+</p>
 
-[![Tests](https://github.com/tavva/tapedeck/actions/workflows/test.yml/badge.svg)](https://github.com/tavva/tapedeck/actions/workflows/test.yml)
-![macOS](https://img.shields.io/badge/macOS-14%2B-111111)
-![Swift](https://img.shields.io/badge/Swift-6.0-f05138)
+<h1 align="center">Tapedeck</h1>
 
-Tapedeck is a native macOS app for turning Plaud voice-recorder audio into
-searchable, project-organized transcripts. It pulls new recordings in the
-background, downloads the audio, transcribes it with Deepgram, classifies each
-transcript with Gemini, and writes clean files into `~/Tapedeck/` for tools like
-Obsidian, Hazel, Spotlight, and shell scripts.
+<p align="center">
+  Turn Plaud recordings into searchable, project-organized transcripts.
+</p>
+<p align="center">
+  A native macOS app that syncs in the background, transcribes with Deepgram,
+  classifies with Gemini, and writes stable files into <code>~/Tapedeck/</code>
+  for Obsidian, Hazel, Spotlight, and shell scripts.
+</p>
+
+<p align="center">
+  <a href="https://github.com/tavva/tapedeck/actions/workflows/test.yml"><img src="https://github.com/tavva/tapedeck/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <img src="https://img.shields.io/badge/macOS-14%2B-blue" alt="macOS 14+">
+  <img src="https://img.shields.io/badge/Swift-6-orange" alt="Swift 6">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
+</p>
 
 It is designed to be quiet: the helper keeps syncing while the app is closed,
 the UI stays focused on review and correction, and the filesystem layout is
