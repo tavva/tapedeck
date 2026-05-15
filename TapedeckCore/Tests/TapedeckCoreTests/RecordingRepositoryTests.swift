@@ -68,10 +68,12 @@ struct RecordingRepositoryTests {
                                    confidence: 0.9, reasoning: "r", by: "test",
                                    at: 10, linkState: .pendingRelink)
         try repo.markLinked(sourceId: "rec-1", linkedProjectId: "p")
-        #expect(try #require(repo.find(sourceId: "rec-1")).projectLinkState == .linked)
+        let linked = try #require(try repo.find(sourceId: "rec-1"))
+        #expect(linked.projectLinkState == .linked)
 
         try repo.markPendingRelink(sourceId: "rec-1")
 
-        #expect(try #require(repo.find(sourceId: "rec-1")).projectLinkState == .pendingRelink)
+        let pendingRelink = try #require(try repo.find(sourceId: "rec-1"))
+        #expect(pendingRelink.projectLinkState == .pendingRelink)
     }
 }
