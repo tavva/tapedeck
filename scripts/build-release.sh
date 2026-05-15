@@ -170,7 +170,7 @@ rm "$ITEM_FILE"
   cd "$APPCAST_DIR"
   git add appcast.xml
   git commit -m "Update appcast for ${TAG}"
-  git push "$RELEASE_REMOTE" gh-pages
+  PRE_COMMIT_ALLOW_NO_CONFIG=1 git push "$RELEASE_REMOTE" gh-pages
 )
 git worktree remove "$APPCAST_DIR"
 
