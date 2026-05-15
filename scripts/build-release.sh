@@ -35,7 +35,11 @@ echo "==> Setting version to ${VERSION}..."
 /usr/bin/sed -i '' -E "s/(CFBundleShortVersionString: )[0-9.]+/\1${VERSION}/" project.yml
 /usr/bin/sed -i '' -E "s/(CFBundleVersion: )[0-9.]+/\1${VERSION}/" project.yml
 git add Tapedeck/Info.plist TapedeckSyncHelper/Info.plist project.yml
-git commit -m "release: v${VERSION}"
+if git diff --cached --quiet; then
+  git commit --allow-empty -m "release: v${VERSION}"
+else
+  git commit -m "release: v${VERSION}"
+fi
 
 # Step 3: Regenerate project + clean build dir.
 rm -rf "$BUILD_DIR"
@@ -108,7 +112,13 @@ EDDSA_SIGNATURE=$("$SPARKLE_TOOLS/sign_update" "$DMG_PATH")
 
 echo "==> Updating appcast..."
 APPCAST_DIR="$BUILD_DIR/appcast-work"
-git worktree add "$APPCAST_DIR" gh-pages
+if git show-ref --verify --quiet refs/heads/gh-pages; then
+  git worktree add "$APPCAST_DIR" gh-pages
+elif git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
+  git worktree add -b gh-pages "$APPCAST_DIR" origin/gh-pages
+else
+  git worktree add --orphan -b gh-pages "$APPCAST_DIR"
+fi
 APPCAST_FILE="$APPCAST_DIR/appcast.xml"
 
 PUB_DATE=$(date -R)
@@ -151,10 +161,21 @@ git push origin gh-pages
 cd -
 git worktree remove "$APPCAST_DIR"
 
-# Step 14: gh release create — creates tag + release atomically.
+# Step 14: push the exact release commit and tag, then create the GitHub release.
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$CURRENT_BRANCH" = "HEAD" ]; then
+  echo "Error: release must run from a branch, not detached HEAD."
+  exit 1
+fi
+RELEASE_SHA=$(git rev-parse HEAD)
+git tag -a "$TAG" -m "Tapedeck $TAG"
+git push origin "$CURRENT_BRANCH" "$TAG"
+
 echo "==> Creating GitHub release..."
 gh release create "$TAG" "$DMG_PATH" \
   --title "Tapedeck $TAG" \
+  --target "$RELEASE_SHA" \
+  --verify-tag \
   --generate-notes
 
 echo "==> Done! Release $TAG published."
