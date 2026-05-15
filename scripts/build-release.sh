@@ -15,6 +15,12 @@ EXPORT_PATH="$BUILD_DIR/export"
 DMG_PATH="$BUILD_DIR/Tapedeck-${VERSION}.dmg"
 NOTARIZE_PROFILE="${NOTARIZE_PROFILE:-countdown-notarize}"
 
+cleanup_generated_entitlements() {
+  /usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" Tapedeck/Tapedeck.entitlements 2>/dev/null || true
+  /usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" TapedeckSyncHelper/TapedeckSyncHelper.entitlements 2>/dev/null || true
+}
+trap cleanup_generated_entitlements EXIT
+
 # Step 1: Bail on dirty tree or pre-existing tag.
 if ! git diff --quiet HEAD; then
   echo "Error: working tree has uncommitted changes. Commit or stash first."
@@ -53,7 +59,6 @@ xcodebuild -project "$PROJECT" \
   archive \
   -archivePath "$ARCHIVE_PATH" \
   DEVELOPMENT_TEAM="$TEAM_ID" \
-  CODE_SIGN_IDENTITY="Developer ID Application" \
   -quiet
 
 # Step 6: Export (signed, not yet notarised).
@@ -68,6 +73,11 @@ cat > "$EXPORT_OPTIONS" << EXPORT_OPTIONS_EOF
   <key>signingStyle</key><string>manual</string>
   <key>teamID</key><string>${TEAM_ID}</string>
   <key>destination</key><string>export</string>
+  <key>provisioningProfiles</key>
+  <dict>
+    <key>com.benphillips.tapedeck</key><string>Tapedeck Developer ID</string>
+    <key>com.benphillips.tapedeck.synchelper</key><string>Tapedeck Synchelper Developer ID</string>
+  </dict>
 </dict>
 </plist>
 EXPORT_OPTIONS_EOF
