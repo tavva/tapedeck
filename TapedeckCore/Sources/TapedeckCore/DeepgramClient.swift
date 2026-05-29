@@ -25,7 +25,7 @@ public struct DeepgramClient: Sendable {
 
     public func transcribe(audioAt url: URL, contentType: String) async throws -> Result {
         var req = URLRequest(url: URL(string:
-            "https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&diarize=true&punctuate=true&utterances=true")!)
+            "https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&diarize=true&diarize_model=latest&punctuate=true&utterances=true")!)
         req.httpMethod = "POST"
         req.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue(contentType, forHTTPHeaderField: "Content-Type")
