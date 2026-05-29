@@ -27,6 +27,21 @@ struct DeepgramClientTests {
         #expect(result.utterances.first?.speaker == 0)
     }
 
+    @Test func requestsLatestDiarizeModel() async throws {
+        let (session, sid) = URLProtocolStub.makeSession()
+        defer { URLProtocolStub.clear(sessionId: sid) }
+        URLProtocolStub.register(sessionId: sid, "dg", matching: { req in
+            req.url?.absoluteString.contains("diarize_model=latest") ?? false
+        }, handler: { req in
+            URLProtocolStub.jsonResponse(for: req, fixture: "deepgram/short_recording.json")
+        })
+        let client = DeepgramClient(apiKey: "fake", session: session)
+        let audio = try writeTempAudio()
+        defer { try? FileManager.default.removeItem(at: audio) }
+        let result = try await client.transcribe(audioAt: audio, contentType: "audio/wav")
+        #expect(!result.transcript.isEmpty)
+    }
+
     @Test func renderTranscriptInterleavesSpeakerLabels() {
         let utterances: [DeepgramClient.Utterance] = [
             .init(speaker: 0, start: 0, end: 1, transcript: "Hello."),
