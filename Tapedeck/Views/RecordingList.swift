@@ -41,6 +41,9 @@ struct RecordingList: View {
                         .clipShape(Capsule())
                 }
             }
+            .contextMenu {
+                Button("Reveal in Finder") { FinderReveal.reveal(rec) }
+            }
         }
     }
 

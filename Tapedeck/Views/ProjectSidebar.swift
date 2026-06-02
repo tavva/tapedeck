@@ -20,6 +20,9 @@ struct ProjectSidebar: View {
             Section("Projects") {
                 ForEach(appState.projects, id: \.id) { project in
                     Label(project.displayName, systemImage: "folder").tag(project.id)
+                        .contextMenu {
+                            Button("Open in Finder") { FinderReveal.openProjectFolder(slug: project.id) }
+                        }
                 }
                 Button(action: { showingNewProject = true }) {
                     Label("New project…", systemImage: "plus")

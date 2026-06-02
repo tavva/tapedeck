@@ -67,6 +67,7 @@ struct DetailPane: View {
                     .disabled(appState.activity != nil
                               || rec.transcribedAt == nil
                               || appState.projects.isEmpty)
+                    Button("Reveal in Finder") { FinderReveal.reveal(rec) }
                 }
                 ForEach(appState.stageErrors(for: rec.sourceId), id: \.stage) { err in
                     errorRow(err)
