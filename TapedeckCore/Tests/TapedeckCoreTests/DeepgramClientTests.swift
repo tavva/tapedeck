@@ -27,18 +27,22 @@ struct DeepgramClientTests {
         #expect(result.utterances.first?.speaker == 0)
     }
 
-    @Test func requestsLatestDiarizeModel() async throws {
+    @Test func requestsLatestDiarizeModelWithoutLegacyDiarizeFlag() async throws {
         let (session, sid) = URLProtocolStub.makeSession()
         defer { URLProtocolStub.clear(sessionId: sid) }
-        URLProtocolStub.register(sessionId: sid, "dg", matching: { req in
-            req.url?.absoluteString.contains("diarize_model=latest") ?? false
-        }, handler: { req in
-            URLProtocolStub.jsonResponse(for: req, fixture: "deepgram/short_recording.json")
+        var capturedURL: String?
+        URLProtocolStub.register(sessionId: sid, "dg", matching: { _ in true }, handler: { req in
+            capturedURL = req.url?.absoluteString
+            return URLProtocolStub.jsonResponse(for: req, fixture: "deepgram/short_recording.json")
         })
         let client = DeepgramClient(apiKey: "fake", session: session)
         let audio = try writeTempAudio()
         defer { try? FileManager.default.removeItem(at: audio) }
         let result = try await client.transcribe(audioAt: audio, contentType: "audio/wav")
+        let url = try #require(capturedURL)
+        #expect(url.contains("diarize_model=latest"))
+        // Deepgram rejects requests that set both diarize and diarize_model (HTTP 400).
+        #expect(!url.contains("diarize=true"))
         #expect(!result.transcript.isEmpty)
     }
 
