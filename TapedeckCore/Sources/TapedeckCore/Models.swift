@@ -67,7 +67,7 @@ public struct Recording: Equatable, Sendable {
     }
 }
 
-public enum SyncStage: String, Sendable { case download, transcribe, classify, link }
+public enum SyncStage: String, Sendable, CaseIterable { case download, transcribe, classify, link }
 
 public struct StageError: Equatable, Sendable {
     public var sourceId: String

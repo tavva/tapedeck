@@ -204,6 +204,12 @@ final class AppState {
         Task { await self.syncNow(reason: "manual_override") }
     }
 
+    /// Recorded errors for a recording, in pipeline order, for inline display.
+    func stageErrors(for sourceId: String) -> [StageError] {
+        let byStage = errors[sourceId] ?? [:]
+        return SyncStage.allCases.compactMap { byStage[$0] }
+    }
+
     func retry(sourceId: String, stage: SyncStage) async throws {
         try recordingRepo.clearError(sourceId: sourceId, stage: stage)
         try await refresh()
