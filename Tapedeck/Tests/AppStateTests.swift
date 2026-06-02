@@ -109,6 +109,31 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.helperStage, .idle)
     }
 
+    func testIsLoggedIn_falseWhenTokenMissing() async throws {
+        let store = try Store.openInMemory()
+        let state = AppState(layout: .standard, store: store,
+                             tokenReader: { false },
+                             coordinator: FakeRunner(status: 0),
+                             lockProbe: { false },
+                             polling: false,
+                             transientDuration: .milliseconds(10))
+        try await state.refresh()
+        XCTAssertEqual(state.tokenStatus, "missing")
+        XCTAssertFalse(state.isLoggedIn)
+    }
+
+    func testIsLoggedIn_trueWhenTokenPresent() async throws {
+        let store = try Store.openInMemory()
+        let state = AppState(layout: .standard, store: store,
+                             tokenReader: { true },
+                             coordinator: FakeRunner(status: 0),
+                             lockProbe: { false },
+                             polling: false,
+                             transientDuration: .milliseconds(10))
+        try await state.refresh()
+        XCTAssertTrue(state.isLoggedIn)
+    }
+
     func testStaleStageRetained_whenLockHeld() async throws {
         let store = try Store.openInMemory()
         try writeHelperStage(.transcribing, store: store, now: { 1 })
