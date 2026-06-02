@@ -43,6 +43,7 @@ struct TapedeckApp: App {
 
 struct MainView: View {
     @Environment(AppState.self) var appState
+    @State private var presentLogin = false
     var body: some View {
         VStack(spacing: 0) {
             NavigationSplitView {
@@ -100,10 +101,16 @@ struct MainView: View {
                         Button("Sync now") {
                             Task { await appState.syncNow(reason: "ui_sync_now") }
                         }
-                        .disabled(appState.activity != nil)
+                        .disabled(appState.activity != nil || !appState.isLoggedIn)
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    if !appState.isLoggedIn {
+                        Button("Sign in to Plaud") { presentLogin = true }
                     }
                 }
             }
+            .sheet(isPresented: $presentLogin) { TokenWindow() }
             .overlay(alignment: .top) {
                 if appState.tokenStatus == "expired" { ReAuthBanner() }
             }

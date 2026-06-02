@@ -48,6 +48,8 @@ final class AppState {
         }
     }
 
+    var isLoggedIn: Bool { tokenStatus != "missing" }
+
     struct HelperSnapshot {
         var stage: HelperStage
         var done: Int
