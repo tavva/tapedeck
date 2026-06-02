@@ -68,6 +68,9 @@ struct DetailPane: View {
                               || rec.transcribedAt == nil
                               || appState.projects.isEmpty)
                 }
+                ForEach(appState.stageErrors(for: rec.sourceId), id: \.stage) { err in
+                    errorRow(err)
+                }
                 if !transcriptText.isEmpty {
                     SpeakerEditor(
                         sourceId: rec.sourceId,
@@ -87,6 +90,32 @@ struct DetailPane: View {
         .onAppear { loadTranscript(rec) }
         .onChange(of: rec.sourceId) { _, _ in loadTranscript(rec) }
         .onChange(of: rec.transcribedAt) { _, _ in loadTranscript(rec) }
+    }
+
+    @ViewBuilder
+    private func errorRow(_ err: StageError) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(failureTitle(err.stage), systemImage: "exclamationmark.triangle.fill")
+                .font(.callout).bold()
+                .foregroundStyle(.red)
+            Text(err.message)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func failureTitle(_ stage: SyncStage) -> String {
+        switch stage {
+        case .download: "Download failed"
+        case .transcribe: "Transcription failed"
+        case .classify: "Classification failed"
+        case .link: "Linking failed"
+        }
     }
 
     private func loadTranscript(_ rec: Recording) {

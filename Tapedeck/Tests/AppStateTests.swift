@@ -20,6 +20,35 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.recordings.count, 0)
     }
 
+    func testStageErrors_returnsFailedStagesInPipelineOrder() throws {
+        let store = try Store.openInMemory()
+        let state = AppState(layout: .standard, store: store,
+                             tokenReader: { true },
+                             coordinator: FakeRunner(status: 0),
+                             lockProbe: { false },
+                             polling: false,
+                             transientDuration: .milliseconds(10))
+        let sid = "rec-1"
+        state.errors = [sid: [
+            .classify: StageError(sourceId: sid, stage: .classify, occurredAt: 2, attempt: 1, message: "classify boom"),
+            .transcribe: StageError(sourceId: sid, stage: .transcribe, occurredAt: 1, attempt: 1, message: "transcribe boom"),
+        ]]
+        let result = state.stageErrors(for: sid)
+        XCTAssertEqual(result.map(\.stage), [.transcribe, .classify])
+        XCTAssertEqual(result.first?.message, "transcribe boom")
+    }
+
+    func testStageErrors_emptyWhenNoErrors() throws {
+        let store = try Store.openInMemory()
+        let state = AppState(layout: .standard, store: store,
+                             tokenReader: { true },
+                             coordinator: FakeRunner(status: 0),
+                             lockProbe: { false },
+                             polling: false,
+                             transientDuration: .milliseconds(10))
+        XCTAssertTrue(state.stageErrors(for: "absent").isEmpty)
+    }
+
     func testActivity_prefersHelperStageOverBusy() async throws {
         let store = try Store.openInMemory()
         try writeHelperStage(.transcribing, store: store, now: { 1 })
