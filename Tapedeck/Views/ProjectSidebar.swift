@@ -88,6 +88,10 @@ private struct ProjectForm: View {
             TextField("Display name", text: $name)
             TextField("Description", text: $description, axis: .vertical)
                 .lineLimit(4...12)
+            Text("Used to sort recordings into this project. The classifier reads it alongside each transcript, so mention the people, topics and terms that come up in these conversations.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Spacer()
                 Button("Cancel", action: onCancel)
