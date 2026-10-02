@@ -107,6 +107,41 @@ final class AppStateTests: XCTestCase {
         XCTAssertNil(state.transientMessage)
     }
 
+    func testSync_apiKeyMissingExit_setsTransientMessage() async throws {
+        let state = AppState(layout: .standard, store: try Store.openInMemory(),
+                             tokenReader: { true },
+                             coordinator: FakeRunner(status: 3),
+                             lockProbe: { false },
+                             polling: false,
+                             transientDuration: .milliseconds(20))
+        await state.syncNow(reason: "test")
+        XCTAssertEqual(state.transientMessage,
+                       "Sync stopped: a Deepgram or Gemini API key is missing. Add it in Settings.")
+    }
+
+    func testSync_genericFailureExit_setsTransientMessage() async throws {
+        let state = AppState(layout: .standard, store: try Store.openInMemory(),
+                             tokenReader: { true },
+                             coordinator: FakeRunner(status: 1),
+                             lockProbe: { false },
+                             polling: false,
+                             transientDuration: .milliseconds(20))
+        await state.syncNow(reason: "test")
+        XCTAssertEqual(state.transientMessage,
+                       "Sync failed. See ~/Library/Logs/Tapedeck/sync.log for details.")
+    }
+
+    func testSync_successExit_leavesNoTransientMessage() async throws {
+        let state = AppState(layout: .standard, store: try Store.openInMemory(),
+                             tokenReader: { true },
+                             coordinator: FakeRunner(status: 0),
+                             lockProbe: { false },
+                             polling: false,
+                             transientDuration: .milliseconds(20))
+        await state.syncNow(reason: "test")
+        XCTAssertNil(state.transientMessage)
+    }
+
     func testStaleStageCleared_atInit_whenLockFree() throws {
         let store = try Store.openInMemory()
         try writeHelperStage(.transcribing, store: store, now: { 1 })

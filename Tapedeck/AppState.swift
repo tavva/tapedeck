@@ -278,19 +278,36 @@ final class AppState {
         busy = kind
         defer { busy = nil }
         do {
-            _ = try await run()
-        } catch SyncCoordinator.CoordinatorError.helperBusy {
-            transientMessage = "Another sync operation is in progress."
-            let duration = transientDuration
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: duration)
-                self?.transientMessage = nil
+            let status = try await run()
+            if let message = Self.failureMessage(forExitStatus: status) {
+                showTransient(message)
             }
+        } catch SyncCoordinator.CoordinatorError.helperBusy {
+            showTransient("Another sync operation is in progress.")
         } catch SyncCoordinator.CoordinatorError.otherOperationRunning(let other) {
             NSLog("SyncCoordinator: \(kind) requested while \(other) running")
         } catch {
             NSLog("SyncCoordinator \(kind) failed: \(error)")
         }
         try? await refresh()
+    }
+
+    /// User-facing text for helper exit codes that nothing else in the UI reports.
+    /// Token missing (2) and expired (4) already show through login/token state.
+    private static func failureMessage(forExitStatus status: Int32) -> String? {
+        switch status {
+        case 1: return "Sync failed. See ~/Library/Logs/Tapedeck/sync.log for details."
+        case 3: return "Sync stopped: a Deepgram or Gemini API key is missing. Add it in Settings."
+        default: return nil
+        }
+    }
+
+    private func showTransient(_ message: String) {
+        transientMessage = message
+        let duration = transientDuration
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: duration)
+            self?.transientMessage = nil
+        }
     }
 }
