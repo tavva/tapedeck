@@ -27,8 +27,8 @@ targets:
     info:
       path: Tapedeck/Info.plist
       properties:
-        CFBundleShortVersionString: 0.1.0
-        CFBundleVersion: 0.1.0
+        CFBundleShortVersionString: 0.1.1
+        CFBundleVersion: 0.1.1
         SUEnableAutomaticChecks: true
         SUFeedURL: https://tavva.github.io/tapedeck/appcast.xml
         SUPublicEDKey: nT9yOEpXACVlDmRZXGGXjQWNNp38iwH4V3OOJyjNlsc=
@@ -61,8 +61,8 @@ targets:
     info:
       path: TapedeckSyncHelper/Info.plist
       properties:
-        CFBundleShortVersionString: 0.1.0
-        CFBundleVersion: 0.1.0
+        CFBundleShortVersionString: 0.1.1
+        CFBundleVersion: 0.1.1
         LSBackgroundOnly: true
     settings:
       INFOPLIST_FILE: TapedeckSyncHelper/Info.plist
