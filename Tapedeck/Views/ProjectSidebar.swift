@@ -6,8 +6,7 @@ import TapedeckCore
 struct ProjectSidebar: View {
     @Environment(AppState.self) var appState
     @State private var showingNewProject = false
-    @State private var newName = ""
-    @State private var newDescription = ""
+    @State private var editingProject: Project?
 
     var body: some View {
         @Bindable var bindable = appState
@@ -21,6 +20,7 @@ struct ProjectSidebar: View {
                 ForEach(appState.projects, id: \.id) { project in
                     Label(project.displayName, systemImage: "folder").tag(project.id)
                         .contextMenu {
+                            Button("Edit…") { editingProject = project }
                             Button("Open in Finder") { FinderReveal.openProjectFolder(slug: project.id) }
                         }
                 }
@@ -32,37 +32,72 @@ struct ProjectSidebar: View {
             }
         }
         .sheet(isPresented: $showingNewProject) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("New project").font(.headline)
-                TextField("Display name", text: $newName)
-                TextField("Description", text: $newDescription, axis: .vertical)
-                HStack {
-                    Spacer()
-                    Button("Cancel") { showingNewProject = false; newName = ""; newDescription = "" }
-                    Button("Create") {
-                        let slug = newName.lowercased()
-                            .replacingOccurrences(of: " ", with: "-")
-                            .filter { $0.isLetter || $0.isNumber || $0 == "-" }
-                        // Insert through the recordingRepo's store via direct GRDB call would be ugly;
-                        // re-use ProjectRepository via a fresh instance.
-                        let project = Project(id: slug, displayName: newName,
-                                              description: newDescription,
-                                              createdAt: Int64(Date().timeIntervalSince1970 * 1000),
-                                              archivedAt: nil)
-                        try? insertProject(project)
-                        showingNewProject = false
-                        newName = ""; newDescription = ""
-                        Task { try? await appState.refresh() }
-                    }.disabled(newName.isEmpty)
+            ProjectForm(title: "New project", saveLabel: "Create",
+                        onCancel: { showingNewProject = false },
+                        onSave: { name, description in
+                let slug = name.lowercased()
+                    .replacingOccurrences(of: " ", with: "-")
+                    .filter { $0.isLetter || $0.isNumber || $0 == "-" }
+                // Insert through the recordingRepo's store via direct GRDB call would be ugly;
+                // re-use ProjectRepository via a fresh instance.
+                let project = Project(id: slug, displayName: name,
+                                      description: description,
+                                      createdAt: Int64(Date().timeIntervalSince1970 * 1000),
+                                      archivedAt: nil)
+                try? insertProject(project)
+                showingNewProject = false
+                Task { try? await appState.refresh() }
+            })
+        }
+        .sheet(item: $editingProject) { project in
+            ProjectForm(title: "Edit project", saveLabel: "Save",
+                        name: project.displayName, description: project.description,
+                        onCancel: { editingProject = nil },
+                        onSave: { name, description in
+                editingProject = nil
+                Task {
+                    do {
+                        try await appState.updateProject(id: project.id, displayName: name,
+                                                         description: description)
+                    } catch {
+                        NSLog("updateProject \(project.id) failed: \(error)")
+                    }
                 }
-            }
-            .padding()
-            .frame(minWidth: 360)
+            })
         }
     }
 
     private func insertProject(_ project: Project) throws {
         let store = try Store.open(at: Layout.standard.dbURL())
         try ProjectRepository(store: store).insert(project)
+    }
+}
+
+/// Name + description sheet shared by project creation and editing.
+private struct ProjectForm: View {
+    let title: String
+    let saveLabel: String
+    @State var name = ""
+    @State var description = ""
+    let onCancel: () -> Void
+    let onSave: (_ name: String, _ description: String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.headline)
+            TextField("Display name", text: $name)
+            TextField("Description", text: $description, axis: .vertical)
+                .lineLimit(4...12)
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button(saveLabel) { onSave(name, description) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(name.isEmpty)
+            }
+        }
+        .padding()
+        .frame(minWidth: 360)
     }
 }

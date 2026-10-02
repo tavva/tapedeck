@@ -142,6 +142,37 @@ final class AppStateTests: XCTestCase {
         XCTAssertNil(state.transientMessage)
     }
 
+    func testUpdateProject_savesNameAndDescription_keepsSlug() async throws {
+        let store = try Store.openInMemory()
+        try ProjectRepository(store: store).insert(Project(
+            id: "eisbaer", displayName: "Eisbaer", description: "old",
+            createdAt: 1, archivedAt: nil))
+        let state = AppState(layout: .standard, store: store,
+                             tokenReader: { true },
+                             coordinator: FakeRunner(status: 0),
+                             lockProbe: { false },
+                             polling: false,
+                             transientDuration: .milliseconds(20))
+        try await state.updateProject(id: "eisbaer", displayName: "Eisbär",
+                                      description: "Polar bear research grant")
+        XCTAssertEqual(state.projects, [Project(
+            id: "eisbaer", displayName: "Eisbär", description: "Polar bear research grant",
+            createdAt: 1, archivedAt: nil)])
+    }
+
+    func testUpdateProject_throwsForUnknownId() async throws {
+        let state = AppState(layout: .standard, store: try Store.openInMemory(),
+                             tokenReader: { true },
+                             coordinator: FakeRunner(status: 0),
+                             lockProbe: { false },
+                             polling: false,
+                             transientDuration: .milliseconds(20))
+        do {
+            try await state.updateProject(id: "missing", displayName: "X", description: "")
+            XCTFail("expected updateProject to throw")
+        } catch {}
+    }
+
     func testStaleStageCleared_atInit_whenLockFree() throws {
         let store = try Store.openInMemory()
         try writeHelperStage(.transcribing, store: store, now: { 1 })

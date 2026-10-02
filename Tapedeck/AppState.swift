@@ -215,6 +215,20 @@ final class AppState {
         try await refresh()
     }
 
+    enum ProjectEditError: Error, Equatable { case notFound(String) }
+
+    /// Renames a project and replaces its description. The id (slug) stays fixed
+    /// because it names the project's folder under ~/Tapedeck/projects/.
+    func updateProject(id: String, displayName: String, description: String) async throws {
+        guard var project = try projectRepo.findById(id) else {
+            throw ProjectEditError.notFound(id)
+        }
+        project.displayName = displayName
+        project.description = description
+        try projectRepo.update(project)
+        try await refresh()
+    }
+
     func syncNow(reason: String) async {
         await dispatch(.sync, reason: reason) { try await coordinator.run(.sync, reason: reason) }
     }

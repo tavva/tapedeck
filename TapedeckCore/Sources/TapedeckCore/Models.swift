@@ -4,7 +4,7 @@
 import Foundation
 import GRDB
 
-public struct Project: Equatable, Sendable, FetchableRecord, PersistableRecord {
+public struct Project: Equatable, Identifiable, Sendable, FetchableRecord, PersistableRecord {
     public var id: String
     public var displayName: String
     public var description: String
