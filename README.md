@@ -29,10 +29,10 @@ stable enough for automation.
 - **Syncs Plaud recordings** through a signed-in Plaud web session.
 - **Downloads audio and source metadata** into dated folders under
   `~/Tapedeck/audio/`.
-- **Transcribes recordings with Deepgram**, including speaker-labelled plain
-  text and raw Deepgram JSON.
-- **Classifies transcripts with Gemini** into user-defined projects, with a
-  configurable confidence threshold.
+- **Transcribes recordings with Deepgram** (`nova-3`), including
+  speaker-labelled plain text and raw Deepgram JSON.
+- **Classifies transcripts with Gemini** (`gemini-3.8-flash`) into
+  user-defined projects, with a configurable confidence threshold.
 - **Maintains project folders** under `~/Tapedeck/projects/<slug>/`, using
   transcript/JSON copies plus symlinks back to the original audio.
 - **Runs in the background** through a LaunchAgent-backed sync helper every
@@ -64,7 +64,7 @@ For development:
 
 ### Install a Release Build
 
-1. Download the latest `Tapedeck.dmg` from
+1. Download the latest `Tapedeck-<version>.dmg` from
    <https://github.com/tavva/tapedeck/releases/latest>.
 2. Drag `Tapedeck.app` into `/Applications`.
 3. Open Tapedeck and follow the first-launch flow:
@@ -102,6 +102,24 @@ Tapedeck needs three credentials before it can complete a full cycle.
 Automatic transcription and classification are opt-in. When they are off, new
 recordings wait until you click **Transcribe** or **Classify** in the toolbar or
 detail pane. That default keeps paid API calls under explicit user control.
+
+## Projects
+
+Recordings are sorted into projects you define. Create one with **New
+project…** at the bottom of the sidebar; right-click a project and choose
+**Edit…** to change its name or description later.
+
+The description is what the classifier uses to sort recordings: Gemini reads
+every active project's name and description alongside each transcript and picks
+the best fit. Mention the people, topics and terms that come up in that
+project's conversations. A recording is only assigned automatically when
+Gemini's confidence meets the threshold in **Settings -> Classifier**; anything
+below it stays in **Unassigned** for you to file by hand.
+
+A project's slug is derived from its name when it is created and stays fixed
+afterwards, because it names the folder under `~/Tapedeck/projects/`.
+
+## Further Setup Notes
 
 The complete operator checklist lives in
 [docs/runbooks/first-launch.md](docs/runbooks/first-launch.md). After setup, use
@@ -144,11 +162,14 @@ Tapedeck ships as two binaries inside one app bundle, sharing the
 `TapedeckCore` Swift package.
 
 ```text
-Tapedeck.app
-├── Contents/MacOS/Tapedeck            # SwiftUI app
-├── Contents/MacOS/TapedeckSyncHelper  # headless one-cycle sync helper
-└── Frameworks/TapedeckCore.framework  # shared sync, store, API, and layout code
+Tapedeck.app/Contents
+├── MacOS/Tapedeck                     # SwiftUI app
+├── Helpers/TapedeckSyncHelper.app     # headless one-cycle sync helper
+└── Frameworks/Sparkle.framework       # update framework
 ```
+
+`TapedeckCore` (shared sync, store, API, and layout code) is a Swift package
+linked statically into both binaries.
 
 - **Tapedeck** is the SwiftUI app: project sidebar, recording list, detail pane,
   player bar, speaker editor, settings, and Sparkle update controls.
@@ -162,11 +183,12 @@ Tapedeck.app
 The normal sync pipeline is:
 
 ```text
-discover Plaud host
+check Plaud token and API keys
+-> discover Plaud host
 -> list remote recordings
 -> download new audio + metadata
--> transcribe downloaded audio
--> classify transcripts
+-> transcribe downloaded audio      (if automatic transcription is on)
+-> classify transcripts             (if automatic classification is on)
 -> relink project folders
 -> notify the UI
 ```
@@ -250,6 +272,12 @@ Force a background cycle:
 ```bash
 launchctl kickstart "gui/$(id -u)/actor.humanf.tapedeck.synchelper"
 ```
+
+If **Sync now** reports that a Deepgram or Gemini API key is missing, add the
+key in **Settings -> Transcription** or **Settings -> Classifier**, or turn off
+the matching automatic toggle. Keys saved by a local ad-hoc build live in
+`dev-secrets.json`, which release builds do not read, so enter them again after
+switching to a release build.
 
 If transcription or classification does not run, check whether the matching
 automatic toggle is enabled in Settings. Manual toolbar and detail-pane actions
