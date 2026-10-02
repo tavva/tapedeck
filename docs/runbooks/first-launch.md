@@ -8,7 +8,7 @@ machine. Tapedeck owns `~/Tapedeck/` — assume nothing exists there yet.
 - macOS 14 or later.
 - A Plaud account with a working web sign-in.
 - Deepgram API key (saved as a secret in 1Password or similar).
-- Google AI Studio key for Gemini (model `gemini-3-flash-preview`).
+- Google AI Studio key for Gemini (model `gemini-3.8-flash`).
 - The signed-and-notarised `Tapedeck.dmg` from
   <https://github.com/tavva/tapedeck/releases/latest>.
 

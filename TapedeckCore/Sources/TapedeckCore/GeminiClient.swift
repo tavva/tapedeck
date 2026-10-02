@@ -18,6 +18,9 @@ public struct GeminiClient: Sendable {
     }
     public enum GeminiError: Error, Equatable { case malformedResponse(String); case invalidApiKey }
 
+    /// Gemini model used for classification; also recorded as `classified_by`.
+    public static let model = "gemini-3.8-flash"
+
     let session: URLSession
     let apiKey: String
 
@@ -57,7 +60,7 @@ public struct GeminiClient: Sendable {
             ],
         ]
         var req = URLRequest(url: URL(string:
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=\(apiKey)")!)
+            "https://generativelanguage.googleapis.com/v1beta/models/\(Self.model):generateContent?key=\(apiKey)")!)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)

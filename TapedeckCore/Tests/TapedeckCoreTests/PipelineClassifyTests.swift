@@ -225,7 +225,7 @@ struct PipelineClassifyTests {
         try await makePipeline(fx).classifyOne(sourceId: rec.sourceId)
 
         let updated = try #require(try fx.recordings.find(sourceId: rec.sourceId))
-        #expect(updated.classifiedBy == "gemini-3-flash-preview")
+        #expect(updated.classifiedBy == "gemini-3.8-flash")
         #expect(updated.projectId == "kitchen-reno")
     }
 

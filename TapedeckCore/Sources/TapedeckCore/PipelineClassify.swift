@@ -118,7 +118,7 @@ extension Pipeline {
             projectId: assign ? decision.projectId : nil,
             confidence: decision.confidence,
             reasoning: decision.reasoning,
-            by: "gemini-3-flash-preview",
+            by: GeminiClient.model,
             at: deps.now(),
             linkState: linkState)
         try recordings.clearError(sourceId: rec.sourceId, stage: .classify)

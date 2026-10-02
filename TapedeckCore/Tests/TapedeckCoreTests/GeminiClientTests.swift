@@ -42,6 +42,23 @@ struct GeminiClientTests {
         #expect(d.confidence > 0.9)
     }
 
+    @Test func requestsGemini38Flash() async throws {
+        let (session, sid) = URLProtocolStub.makeSession()
+        defer { URLProtocolStub.clear(sessionId: sid) }
+        URLProtocolStub.register(sessionId: sid, "gem", matching: {
+            $0.url?.path == "/v1beta/models/gemini-3.8-flash:generateContent"
+        }, handler: { req in
+            let data = Self.wrapInEnvelope(innerJSON: #"{"project_id":null,"confidence":0.1,"reasoning":"r"}"#)
+            let resp = HTTPURLResponse(url: req.url!, statusCode: 200,
+                                       httpVersion: "HTTP/1.1",
+                                       headerFields: ["Content-Type": "application/json"])!
+            return (resp, data)
+        })
+        let c = GeminiClient(apiKey: "x", session: session)
+        let d = try await c.classify(transcript: "anything", projects: Self.hints)
+        #expect(d.projectId == nil)
+    }
+
     @Test func lowConfidenceStillReturnsProjectId() async throws {
         let (session, sid) = Self.sessionWith(fixture: "gemini/low_confidence.json")
         defer { URLProtocolStub.clear(sessionId: sid) }
