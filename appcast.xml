@@ -32,5 +32,15 @@
                  type="application/octet-stream"
                  sparkle:edSignature="4/PrA6C8XhSisBWm4NoP2SuTxlMQcBtWMlpcXOJohrsYvsee5bR8RdCfRDDa5GVm8vaub5sQTqELz16HXsmoAg==" length="7829968" />
     </item>
+    <item>
+      <title>Version 0.1.3</title>
+      <pubDate>Fri, 20 Nov 2026 13:25:08 +0000</pubDate>
+      <sparkle:version>0.1.3</sparkle:version>
+      <sparkle:shortVersionString>0.1.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/tavva/tapedeck/releases/download/v0.1.3/Tapedeck-0.1.3.dmg"
+                 type="application/octet-stream"
+                 sparkle:edSignature="IlACMXOxZv8HGa38QjvIAR3FWUD9I+bETug+p5cnVBoG5Z4Bn91NqwOrUPsuRjoVGEvN+vK5TG1kc0qTUDu6Dw==" length="7910794" />
+    </item>
   </channel>
 </rss>
