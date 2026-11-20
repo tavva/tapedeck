@@ -1,4 +1,4 @@
-// ABOUTME: Sign-in helper. Opens Plaud in the user's default browser; user pastes the captured JWT here.
+// ABOUTME: Sign-in helper. Opens Plaud in the user's default browser; user pastes the copied session JSON here.
 // ABOUTME: Manual paste because Plaud's sign-in uses Google Identity Services, which refuses to run in WKWebView.
 
 import SwiftUI
@@ -11,14 +11,17 @@ struct TokenWindow: View {
     @State private var pasted = ""
 
     private static let plaudURL = URL(string: "https://web.plaud.ai/")!
-    private static let consoleSnippet = "localStorage.getItem('pld_tokenstr')"
+    /// Copies the current workspace's tokens (plus its id) from the Plaud web app's storage.
+    private static let consoleSnippet =
+        "copy(JSON.stringify((w=>({workspaceId:w,...JSON.parse(localStorage['pld_session.tokens'])" +
+        ".byWsId[w]}))(JSON.parse(localStorage['pld_session.workspace']).currentId)))"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Sign in to Plaud")
                 .font(.headline)
 
-            Text("Plaud's sign-in widget doesn't work inside the app. Sign in via your browser and paste the session token here.")
+            Text("Plaud's sign-in widget doesn't work inside the app. Sign in via your browser and paste your session here.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -37,11 +40,13 @@ struct TokenWindow: View {
 
             step(3) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Open your browser's developer console and run:")
+                    Text("Open your browser's developer console and run this. It copies your session to the clipboard:")
                         .font(.callout)
                     HStack(spacing: 6) {
                         Text(Self.consoleSnippet)
-                            .font(.system(.callout, design: .monospaced))
+                            .font(.system(.caption, design: .monospaced))
+                            .lineLimit(3)
+                            .textSelection(.enabled)
                             .padding(.vertical, 4)
                             .padding(.horizontal, 8)
                             .background(Color(nsColor: .textBackgroundColor))
@@ -58,21 +63,26 @@ struct TokenWindow: View {
 
             step(4) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Paste the result (the long eyJ… string):")
+                    Text("Paste it here:")
                         .font(.callout)
-                    TextField("eyJhbGciOi…", text: $pasted, axis: .vertical)
+                    TextField(#"{"workspaceId":"ws_…","token":"eyJ…",…}"#, text: $pasted, axis: .vertical)
                         .lineLimit(2...5)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
+                    if !trimmedPaste.isEmpty && credentials == nil {
+                        Text("That isn't the copied session. Run the snippet again and paste what it copies.")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
                 }
             }
 
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
-                Button("Save token") { save(pasted) }
+                Button("Save session") { if let credentials { save(credentials) } }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(credentials == nil)
             }
         }
         .padding(20)
@@ -90,13 +100,18 @@ struct TokenWindow: View {
         }
     }
 
-    private func save(_ raw: String) {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let unquoted = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-        let token = unquoted.hasPrefix("bearer ")
-            ? String(unquoted.dropFirst("bearer ".count)) : unquoted
+    private var trimmedPaste: String {
+        pasted.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var credentials: PlaudCredentials? {
+        try? PlaudCredentials(json: trimmedPaste)
+    }
+
+    private func save(_ credentials: PlaudCredentials) {
+        guard let json = try? credentials.json() else { return }
         try? KeychainStore.shared.set(
-            service: "tapedeck.source.jwt", account: "default", value: token)
+            service: PlaudCredentials.keychainService, account: "default", value: json)
         try? appState.clearTokenStatus()
         AppStateNotifier.post(changedKey: "token_status")
         Task { try? await appState.refresh(); dismiss() }

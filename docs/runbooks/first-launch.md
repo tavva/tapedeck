@@ -24,11 +24,11 @@ machine. Tapedeck owns `~/Tapedeck/` — assume nothing exists there yet.
 2. macOS will Gatekeeper-prompt the first time. Click **Open**.
 3. The main window appears empty.
 
-## Step 3 — Capture a Plaud session token
+## Step 3 — Capture a Plaud session
 
 Plaud's login page uses Google Identity Services, which refuses to run
 inside an embedded webview. The app opens Plaud in your default browser
-and asks you to paste the session JWT back in.
+and asks you to paste the session back in.
 
 1. Open **Settings → Account** and click **Sign in via web…**.
 2. In the sheet, click **Open Plaud in browser**. Sign in as usual at
@@ -37,11 +37,16 @@ and asks you to paste the session JWT back in.
    (Chrome/Edge/Arc: ⌥⌘J; Safari: enable the Develop menu in Settings →
    Advanced, then ⌥⌘C) and run the snippet shown in the sheet:
    ```js
-   localStorage.getItem('pld_tokenstr')
+   copy(JSON.stringify((w=>({workspaceId:w,...JSON.parse(localStorage['pld_session.tokens']).byWsId[w]}))(JSON.parse(localStorage['pld_session.workspace']).currentId)))
    ```
-4. Copy the returned value (the long `eyJ…` string; the `bearer ` prefix
-   is fine to leave or strip — the app handles both) and paste it into
-   the **Paste the result** field. Click **Save token**.
+   It prints nothing; it copies a JSON object holding your workspace id,
+   access token, refresh token and their expiry times to the clipboard.
+4. Paste it into the **Paste it here** field and click **Save session**.
+   The button stays disabled until the pasted text parses.
+
+Tapedeck refreshes the access token before each sync. You only need to
+repeat this when the refresh token expires (about 30 days) or Plaud
+rejects it; the app then shows the "Session expired" banner.
 
 ## Step 4 — Enter API keys
 

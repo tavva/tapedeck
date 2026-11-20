@@ -88,10 +88,13 @@ permissions. Release builds use the macOS data-protection keychain.
 
 Tapedeck needs three credentials before it can complete a full cycle.
 
-1. **Plaud session token**
+1. **Plaud session**
    Open **Settings -> Account -> Sign in via web...**. Tapedeck opens Plaud in
-   your browser, then asks you to paste the `localStorage` session token back
-   into the app.
+   your browser and shows a one-line console snippet. Run it in the browser's
+   developer console; it copies your workspace session (access token, refresh
+   token and their expiry times) as JSON. Paste that into the app. Tapedeck
+   refreshes the access token before each sync, so you only sign in again when
+   the refresh token runs out (about 30 days) or Plaud rejects it.
 2. **Deepgram key**
    Open **Settings -> Transcription**, paste the API key, save it, and optionally
    test the connection.
@@ -184,6 +187,7 @@ The normal sync pipeline is:
 
 ```text
 check Plaud token and API keys
+-> refresh the Plaud token if it expires within 5 minutes
 -> discover Plaud host
 -> list remote recordings
 -> download new audio + metadata

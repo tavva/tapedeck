@@ -73,7 +73,7 @@ struct AccountTab: View {
     }
 
     private func signOut() throws {
-        try KeychainStore.shared.delete(service: "tapedeck.source.jwt", account: "default")
+        try KeychainStore.shared.delete(service: PlaudCredentials.keychainService, account: "default")
         try appState.clearTokenStatus()
         Task { try? await appState.refresh() }
         AppStateNotifier.post(changedKey: "token_status")

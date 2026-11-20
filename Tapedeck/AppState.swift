@@ -70,7 +70,7 @@ final class AppState {
     let playback = PlaybackController()
 
     nonisolated static func defaultTokenReader() -> Bool {
-        (try? KeychainStore.shared.get(service: "tapedeck.source.jwt", account: "default")) != nil
+        (try? KeychainStore.shared.get(service: PlaudCredentials.keychainService, account: "default")) != nil
     }
 
     nonisolated static func probeLock(at url: URL) -> Bool {
