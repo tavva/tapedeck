@@ -22,27 +22,22 @@ struct PipelineEndToEndTests {
         return try! JSONSerialization.data(withJSONObject: envelope)
     }
 
-    /// Builds a PLAUD-style `/file/simple/web` list response with `count` synthetic
-    /// recordings. Only the fields SourceClient.listPage actually decodes are
-    /// populated; everything else matches the on-disk fixture for shape parity.
+    /// Builds a Plaud 4.0 `/file-app/v4/recordings/all` response with `count`
+    /// synthetic recordings on a single page. Only the fields SourceClient.listPage
+    /// decodes are populated.
     static func makeListResponseBody(count: Int) -> Data {
         let items: [[String: Any]] = (0..<count).map { i in
-            let id = String(format: "rec-%032d", i)
-            return [
-                "id": id,
-                "filename": "2026-05-11 \(String(format: "%02d", i)):00:00",
-                "filesize": 32623616,
-                "fullname": "\(id).ogg",
-                "start_time": 1778491800000 + Int64(i) * 1000,
-                "end_time": 1778499446000 + Int64(i) * 1000,
-                "duration": 7646000
+            [
+                "file_id": String(format: "f_%032d", i),
+                "name": "2026-05-11 \(String(format: "%02d", i)):00:00",
+                "created_at_show_ms": 1778491800000 + Int64(i) * 1000,
+                "duration_ms": 7646000,
+                "status": 1
             ]
         }
         let envelope: [String: Any] = [
             "status": 0,
-            "msg": "success",
-            "data_file_total": count,
-            "data_file_list": items
+            "data": ["items": items, "next_cursor": ""]
         ]
         return try! JSONSerialization.data(withJSONObject: envelope)
     }
@@ -54,7 +49,11 @@ struct PipelineEndToEndTests {
         let sid: String
     }
 
-    private func makeEndToEndFixture(downloadCount: Int = 2) throws -> EndToEndFixture {
+    private func makeEndToEndFixture(
+        downloadCount: Int = 2,
+        credentials: PlaudCredentials = .test(),
+        saveCredentials: @escaping @Sendable (PlaudCredentials) throws -> Void = { _ in }
+    ) throws -> EndToEndFixture {
         let layout = makeLayout()
         let store = try Store.openInMemory()
         let projects = ProjectRepository(store: store)
@@ -74,22 +73,17 @@ struct PipelineEndToEndTests {
         let listBody = Self.makeListResponseBody(count: downloadCount)
 
         URLProtocolStub.register(sessionId: sid, "list", matching: { req in
-            req.url?.path.contains("/file/simple/web") == true
+            req.url?.path == "/file-app/v4/recordings/all"
         }, handler: { req in
             let resp = HTTPURLResponse(url: req.url!, statusCode: 200,
                                        httpVersion: "HTTP/1.1",
                                        headerFields: ["Content-Type": "application/json"])!
             return (resp, listBody)
         })
-        URLProtocolStub.register(sessionId: sid, "temp", matching: { req in
-            req.url?.path.contains("/file/temp-url/") == true
+        URLProtocolStub.register(sessionId: sid, "detail", matching: { req in
+            req.url?.path.hasPrefix("/file-app/v4/files/detail/") == true
         }, handler: { req in
-            URLProtocolStub.jsonResponse(for: req, fixture: "source/temp_url.json")
-        })
-        URLProtocolStub.register(sessionId: sid, "metadata", matching: { req in
-            req.url?.path == "/file/list" && req.httpMethod == "POST"
-        }, handler: { req in
-            URLProtocolStub.jsonResponse(for: req, fixture: "source/raw_metadata.json")
+            URLProtocolStub.jsonResponse(for: req, fixture: "source/file_detail.json")
         })
         URLProtocolStub.register(sessionId: sid, "s3", matching: { req in
             req.url?.host?.contains("amazonaws.com") == true
@@ -118,7 +112,7 @@ struct PipelineEndToEndTests {
         })
 
         let now: @Sendable () -> Int64 = { 999 }
-        let source = SourceClient(token: "t.eyJzdWIiOiJ4In0.sig",
+        let source = SourceClient(credentials: credentials,
                                   host: URL(string: "https://api-euc1.plaud.ai")!,
                                   session: session)
         let pipeline = Pipeline(deps: .init(
@@ -127,7 +121,8 @@ struct PipelineEndToEndTests {
             deepgram: DeepgramClient(apiKey: "dg", session: session),
             gemini: GeminiClient(apiKey: "gm", session: session),
             logger: DiscardingLog(),
-            now: now))
+            now: now,
+            saveCredentials: saveCredentials))
         return EndToEndFixture(layout: layout, store: store, pipeline: pipeline, sid: sid)
     }
 
@@ -204,7 +199,7 @@ struct PipelineEndToEndTests {
                             startedAt: 1, durationMs: 1000, filesize: 8,
                             audioExtension: "opus", lastSeenAt: 1)
         try recordings.upsertFromRemote(rec)
-        try recordings.setDownloaded(sourceId: "rec-1", ext: "opus", at: 2)
+        try recordings.setDownloaded(sourceId: "rec-1", ext: "opus", filesize: 4, at: 2)
         try recordings.setTranscribed(sourceId: "rec-1", at: 3)
 
         let (session, sid) = URLProtocolStub.makeSession()
@@ -220,7 +215,7 @@ struct PipelineEndToEndTests {
 
         let pipeline = Pipeline(deps: .init(
             store: store, layout: layout,
-            source: SourceClient(token: "t.eyJzdWIiOiJ4In0.sig",
+            source: SourceClient(credentials: .test(),
                                  host: URL(string: "https://api-euc1.plaud.ai")!, session: session),
             deepgram: DeepgramClient(apiKey: "dg", session: session),
             gemini: GeminiClient(apiKey: "gm", session: session),
@@ -246,7 +241,7 @@ struct PipelineEndToEndTests {
         // throw before we touch the network.
         let pipeline = Pipeline(deps: .init(
             store: store, layout: layout,
-            source: SourceClient(token: "t.eyJzdWIiOiJ4In0.sig",
+            source: SourceClient(credentials: .test(),
                                  host: URL(string: "https://api-euc1.plaud.ai")!, session: session),
             deepgram: DeepgramClient(apiKey: "dg", session: session),
             gemini: GeminiClient(apiKey: "gm", session: session),
@@ -285,4 +280,62 @@ struct PipelineEndToEndTests {
         #expect(total == 2)
         #expect(done == 2)
     }
+
+    @Test func downloadStoresAudioSizeAndMetadataSidecar() async throws {
+        let fx = try makeEndToEndFixture(downloadCount: 1)
+        defer { URLProtocolStub.clear(sessionId: fx.sid) }
+        try await fx.pipeline.syncOnly()
+        let rec = try #require(try Self.fetchAllRecordings(fx.store).first)
+        #expect(rec.filesize == 46412288)
+        #expect(rec.audioExtension == "ogg")
+        let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
+        let stem = fx.layout.stem(sourceId: rec.sourceId, title: rec.filename)
+        let sidecar = fx.layout.audioDir(date: date).appending(path: "\(stem).source.json")
+        let text = try String(contentsOf: sidecar, encoding: .utf8)
+        #expect(text.contains("\"file_id\""))
+        #expect(!text.contains("X-Amz-Signature"))
+    }
+
+    @Test func syncOnly_refreshesANearlyExpiredTokenAndSavesIt() async throws {
+        let saved = SavedCredentials()
+        let fx = try makeEndToEndFixture(
+            downloadCount: 1,
+            credentials: .test(expiresAt: 999 + 60_000),
+            saveCredentials: { saved.append($0) })
+        defer { URLProtocolStub.clear(sessionId: fx.sid) }
+        URLProtocolStub.register(sessionId: fx.sid, "refresh", matching: { req in
+            req.url?.path == "/user-app/auth/workspace/refresh/ws_test"
+        }, handler: { req in
+            URLProtocolStub.jsonResponse(for: req, fixture: "source/refresh_ok.json")
+        })
+        try await fx.pipeline.syncOnly()
+        #expect(saved.all.map(\.token) == ["refreshed-access.eyJyZWdpb24iOiJhd3M6ZXUtY2VudHJhbC0xIn0.sig"])
+        #expect(try RecordingRepository(store: fx.store).count() == 1)
+    }
+
+    @Test func syncOnly_doesNotSaveCredentialsWhenTokenIsFresh() async throws {
+        let saved = SavedCredentials()
+        let fx = try makeEndToEndFixture(downloadCount: 1, saveCredentials: { saved.append($0) })
+        defer { URLProtocolStub.clear(sessionId: fx.sid) }
+        try await fx.pipeline.syncOnly()
+        #expect(saved.all.isEmpty)
+    }
+
+    @Test func syncOnly_throwsUnauthorisedBeforeListing_whenRefreshTokenExpired() async throws {
+        let fx = try makeEndToEndFixture(
+            downloadCount: 1,
+            credentials: .test(expiresAt: 999 + 60_000, refreshExpiresAt: 998))
+        defer { URLProtocolStub.clear(sessionId: fx.sid) }
+        await #expect(throws: SourceClientError.unauthorised) {
+            try await fx.pipeline.syncOnly()
+        }
+        #expect(try RecordingRepository(store: fx.store).count() == 0)
+    }
+}
+
+private final class SavedCredentials: @unchecked Sendable {
+    private let lock = NSLock()
+    private var saved: [PlaudCredentials] = []
+    func append(_ c: PlaudCredentials) { lock.lock(); saved.append(c); lock.unlock() }
+    var all: [PlaudCredentials] { lock.lock(); defer { lock.unlock() }; return saved }
 }

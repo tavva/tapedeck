@@ -24,7 +24,10 @@ let deps = HelperDeps(
     readSecret: { service, account in
         try KeychainStore.shared.get(service: service, account: account)
     },
-    makeSource: { token in SourceClient(token: token) },
+    writeSecret: { service, account, value in
+        try KeychainStore.shared.set(service: service, account: account, value: value)
+    },
+    makeSource: { credentials in SourceClient(credentials: credentials) },
     makeDeepgram: { key in DeepgramClient(apiKey: key) },
     makeGemini: { key in GeminiClient(apiKey: key) },
     logger: logger,

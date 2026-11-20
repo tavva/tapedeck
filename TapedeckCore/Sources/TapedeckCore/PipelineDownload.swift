@@ -1,4 +1,4 @@
-// ABOUTME: Download stage of Pipeline. Per-recording: fetch temp URL, stream audio,
+// ABOUTME: Download stage of Pipeline. Per-recording: fetch file detail, stream audio,
 // ABOUTME: write metadata sidecar, update state. Bounded parallelism via TaskGroup.
 
 import Foundation
@@ -38,22 +38,21 @@ extension Pipeline {
 
     private func downloadOne(_ rec: Recording, auth: AuthState) async {
         do {
-            let tempURL = try await RetryPolicy.run { [source = deps.source] in
-                try await source.tempURL(for: rec.sourceId)
+            let detail = try await RetryPolicy.run { [source = deps.source] in
+                try await source.fileDetail(for: rec.sourceId)
             }
+            let audioURL = detail.audioURL
             let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
             let dir = deps.layout.audioDir(date: date)
             let stem = deps.layout.stem(sourceId: rec.sourceId, title: rec.filename)
             let target = dir.appending(path: stem)
-                            .appendingPathExtension(tempURL.pathExtension.isEmpty ? "audio" : tempURL.pathExtension)
+                            .appendingPathExtension(audioURL.pathExtension.isEmpty ? "audio" : audioURL.pathExtension)
             let ext = try await RetryPolicy.run { [source = deps.source] in
-                try await source.download(from: tempURL, target: target)
+                try await source.download(from: audioURL, target: target)
             }
-            let metadata = try await RetryPolicy.run { [source = deps.source] in
-                try await source.rawMetadata(for: [rec.sourceId])
-            }
-            try metadata.write(to: dir.appending(path: "\(stem).source.json"))
-            try recordings.setDownloaded(sourceId: rec.sourceId, ext: ext, at: deps.now())
+            try detail.metadata.write(to: dir.appending(path: "\(stem).source.json"))
+            try recordings.setDownloaded(sourceId: rec.sourceId, ext: ext,
+                                         filesize: detail.audioSize, at: deps.now())
             try recordings.clearError(sourceId: rec.sourceId, stage: .download)
             deps.logger.info("download_ok", source: rec.sourceId)
         } catch SourceClientError.unauthorised {

@@ -36,7 +36,8 @@ public struct HelperDeps: Sendable {
     public var layout: Layout
     public var openStore: @Sendable (URL) throws -> Store
     public var readSecret: @Sendable (_ service: String, _ account: String) throws -> String?
-    public var makeSource: @Sendable (String) -> SourceClient
+    public var writeSecret: @Sendable (_ service: String, _ account: String, _ value: String) throws -> Void
+    public var makeSource: @Sendable (PlaudCredentials) -> SourceClient
     public var makeDeepgram: @Sendable (String) -> DeepgramClient
     public var makeGemini: @Sendable (String) -> GeminiClient
     public var logger: any SyncLog
@@ -47,7 +48,8 @@ public struct HelperDeps: Sendable {
         layout: Layout,
         openStore: @escaping @Sendable (URL) throws -> Store,
         readSecret: @escaping @Sendable (String, String) throws -> String?,
-        makeSource: @escaping @Sendable (String) -> SourceClient,
+        writeSecret: @escaping @Sendable (String, String, String) throws -> Void,
+        makeSource: @escaping @Sendable (PlaudCredentials) -> SourceClient,
         makeDeepgram: @escaping @Sendable (String) -> DeepgramClient,
         makeGemini: @escaping @Sendable (String) -> GeminiClient,
         logger: any SyncLog,
@@ -57,6 +59,7 @@ public struct HelperDeps: Sendable {
         self.layout = layout
         self.openStore = openStore
         self.readSecret = readSecret
+        self.writeSecret = writeSecret
         self.makeSource = makeSource
         self.makeDeepgram = makeDeepgram
         self.makeGemini = makeGemini
@@ -90,8 +93,12 @@ private func runFullCycle(deps: HelperDeps) async -> Int32 {
             try? clearHelperStage(store: store, now: deps.now)
             deps.notify("helper_stage")
         }
-        guard let token = try deps.readSecret("tapedeck.source.jwt", "default") else {
-            deps.logger.error("token_missing", source: nil, message: "no JWT in keychain")
+        guard let stored = try deps.readSecret(PlaudCredentials.keychainService, "default") else {
+            deps.logger.error("token_missing", source: nil, message: "no Plaud session in keychain")
+            return 2
+        }
+        guard let credentials = try? PlaudCredentials(json: stored) else {
+            deps.logger.error("token_missing", source: nil, message: "stored Plaud session unreadable")
             return 2
         }
         let needsDeepgram = autoFlag(store: store, key: "auto_transcribe")
@@ -110,10 +117,13 @@ private func runFullCycle(deps: HelperDeps) async -> Int32 {
         }
         let pipeline = Pipeline(deps: .init(
             store: store, layout: deps.layout,
-            source: deps.makeSource(token),
+            source: deps.makeSource(credentials),
             deepgram: deps.makeDeepgram(deepgramKey ?? ""),
             gemini:   deps.makeGemini(geminiKey ?? ""),
-            logger: deps.logger, now: deps.now))
+            logger: deps.logger, now: deps.now,
+            saveCredentials: { [writeSecret = deps.writeSecret] refreshed in
+                try writeSecret(PlaudCredentials.keychainService, "default", try refreshed.json())
+            }))
 
         try writeHelperStage(.syncing, store: store, now: deps.now)
         deps.notify("helper_stage")
@@ -212,7 +222,7 @@ private func buildClassifyPipeline(deps: HelperDeps, store: Store) throws -> Pip
     }
     return Pipeline(deps: .init(
         store: store, layout: deps.layout,
-        source: deps.makeSource(""),
+        source: deps.makeSource(.signedOut),
         deepgram: deps.makeDeepgram(""),
         gemini: deps.makeGemini(geminiKey),
         logger: deps.logger, now: deps.now))
@@ -282,7 +292,7 @@ private func buildTranscribePipeline(deps: HelperDeps, store: Store) throws -> P
     }
     return Pipeline(deps: .init(
         store: store, layout: deps.layout,
-        source: deps.makeSource(""),
+        source: deps.makeSource(.signedOut),
         deepgram: deps.makeDeepgram(deepgramKey),
         gemini: deps.makeGemini(""),
         logger: deps.logger, now: deps.now))

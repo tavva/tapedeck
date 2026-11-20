@@ -59,7 +59,7 @@ struct PipelineClassifyTests {
     private func makePipeline(_ fx: Fixture) -> Pipeline {
         Pipeline(deps: .init(
             store: fx.store, layout: fx.layout,
-            source: SourceClient(token: "t.eyJzdWIiOiJ4In0.sig",
+            source: SourceClient(credentials: .test(),
                                  host: URL(string: "https://api-euc1.plaud.ai")!,
                                  session: fx.session),
             deepgram: DeepgramClient(apiKey: "dg", session: fx.session),
@@ -115,7 +115,7 @@ struct PipelineClassifyTests {
                           startedAt: 1, durationMs: 60_000, filesize: 8,
                           audioExtension: "opus", lastSeenAt: 1)
         try fx.recordings.upsertFromRemote(r)
-        try fx.recordings.setDownloaded(sourceId: sourceId, ext: "opus", at: 2)
+        try fx.recordings.setDownloaded(sourceId: sourceId, ext: "opus", filesize: 4, at: 2)
         if transcribed { try fx.recordings.setTranscribed(sourceId: sourceId, at: 3) }
         return r
     }
@@ -339,7 +339,7 @@ struct PipelineClassifyTests {
                               startedAt: 1, durationMs: 60_000, filesize: 8,
                               audioExtension: "opus", lastSeenAt: 1)
             try fx.recordings.upsertFromRemote(r)
-            try fx.recordings.setDownloaded(sourceId: sid, ext: "opus", at: 2)
+            try fx.recordings.setDownloaded(sourceId: sid, ext: "opus", filesize: 4, at: 2)
             try fx.recordings.setTranscribed(sourceId: sid, at: 3)
             try writeTranscript(layout: fx.layout, recording: r, text: "hello \(i)")
         }

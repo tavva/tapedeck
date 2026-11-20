@@ -23,7 +23,6 @@ public struct RecordingRepository: Sendable {
                     filename = excluded.filename,
                     started_at = excluded.started_at,
                     duration_ms = excluded.duration_ms,
-                    filesize = excluded.filesize,
                     audio_extension = COALESCE(recordings.audio_extension, excluded.audio_extension),
                     last_seen_at = excluded.last_seen_at
             """, arguments: [r.sourceId, r.filename, r.startedAt, r.durationMs,
@@ -66,12 +65,12 @@ public struct RecordingRepository: Sendable {
         }
     }
 
-    public func setDownloaded(sourceId: String, ext: String, at: Int64) throws {
+    public func setDownloaded(sourceId: String, ext: String, filesize: Int64, at: Int64) throws {
         try store.write { db in
             try db.execute(sql: """
-                UPDATE recordings SET audio_extension = ?, audio_downloaded_at = ?
+                UPDATE recordings SET audio_extension = ?, filesize = ?, audio_downloaded_at = ?
                 WHERE source_id = ?
-            """, arguments: [ext, at, sourceId])
+            """, arguments: [ext, filesize, at, sourceId])
         }
     }
 

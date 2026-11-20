@@ -22,6 +22,22 @@ struct RecordingRepositoryTests {
         #expect(try repo.count() == 1)
     }
 
+    @Test func upsertKeepsTheKnownFilesizeOfAnExistingRecording() throws {
+        // The Plaud list carries no file size; the download stage records it.
+        let (_, repo) = try setup()
+        let listed = Recording(sourceId: "abc", filename: "Meeting", startedAt: 1000,
+                               durationMs: 60_000, filesize: 0, audioExtension: nil,
+                               lastSeenAt: 1)
+        try repo.upsertFromRemote(listed)
+        try repo.setDownloaded(sourceId: "abc", ext: "ogg", filesize: 46_412_288, at: 2)
+        var renamed = listed
+        renamed.filename = "Renamed"
+        try repo.upsertFromRemote(renamed)
+        let found = try #require(try repo.find(sourceId: "abc"))
+        #expect(found.filesize == 46_412_288)
+        #expect(found.filename == "Renamed")
+    }
+
     @Test func findReturnsNilForUnknownSourceId() throws {
         let (_, repo) = try setup()
         #expect(try repo.find(sourceId: "missing") == nil)

@@ -76,6 +76,8 @@ struct HelperRunnerTests {
 
     // MARK: runHelper fixtures
 
+    static let storedSession = try! PlaudCredentials.test().json()
+
     private func makeLayout() -> Layout {
         let tmp = FileManager.default.temporaryDirectory
             .appending(path: "tapedeck-helper-\(UUID().uuidString)")
@@ -96,6 +98,7 @@ struct HelperRunnerTests {
         let session: URLSession
         let sessionId: String
         let store: Store
+        let secrets: SecretsBox
         let deps: HelperDeps
     }
 
@@ -110,7 +113,10 @@ struct HelperRunnerTests {
             layout: layout,
             openStore: { url in try Store.open(at: url) },
             readSecret: { service, account in secretsBox.get(service: service, account: account) },
-            makeSource: { _ in SourceClient(token: "t.eyJzdWIiOiJ4In0.sig",
+            writeSecret: { service, account, value in
+                secretsBox.set(service: service, account: account, value: value)
+            },
+            makeSource: { credentials in SourceClient(credentials: credentials,
                                             host: URL(string: "https://api-euc1.plaud.ai")!,
                                             session: session) },
             makeDeepgram: { _ in DeepgramClient(apiKey: "dg", session: session) },
@@ -119,7 +125,7 @@ struct HelperRunnerTests {
             now: { 100 },
             notify: { _ in })
         return Fixture(layout: layout, log: log, session: session, sessionId: sid,
-                       store: store, deps: deps)
+                       store: store, secrets: secretsBox, deps: deps)
     }
 
     private func writeTranscript(layout: Layout, recording: Recording, text: String) throws {
@@ -155,7 +161,7 @@ struct HelperRunnerTests {
                             startedAt: 1, durationMs: 60_000, filesize: 8,
                             audioExtension: "opus", lastSeenAt: 1)
         try recordings.upsertFromRemote(rec)
-        try recordings.setDownloaded(sourceId: "rec-1", ext: "opus", at: 2)
+        try recordings.setDownloaded(sourceId: "rec-1", ext: "opus", filesize: 4, at: 2)
         try recordings.setTranscribed(sourceId: "rec-1", at: 3)
         try writeTranscript(layout: fx.layout, recording: rec, text: "hello")
         return rec
@@ -222,7 +228,7 @@ struct HelperRunnerTests {
                             startedAt: 1, durationMs: 60_000, filesize: 4,
                             audioExtension: "opus", lastSeenAt: 1)
         try recordings.upsertFromRemote(rec)
-        try recordings.setDownloaded(sourceId: "rec-1", ext: "opus", at: 2)
+        try recordings.setDownloaded(sourceId: "rec-1", ext: "opus", filesize: 4, at: 2)
         let date = Date(timeIntervalSince1970: TimeInterval(rec.startedAt) / 1000)
         let dir = fx.layout.audioDir(date: date)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -279,18 +285,75 @@ struct HelperRunnerTests {
     private func stubSourceEmptyList(_ fx: Fixture) {
         URLProtocolStub.register(sessionId: fx.sessionId, "source-empty",
                                  matching: { req in
-            req.url?.path.contains("/file/simple/web") == true
+            req.url?.path == "/file-app/v4/recordings/all"
         }, handler: { req in
             let resp = HTTPURLResponse(url: req.url!, statusCode: 200,
                                        httpVersion: "HTTP/1.1",
                                        headerFields: ["Content-Type": "application/json"])!
-            return (resp, Data(#"{"data_file_list":[]}"#.utf8))
+            return (resp, Data(#"{"status":0,"data":{"items":[],"next_cursor":""}}"#.utf8))
         })
+    }
+
+    @Test func fullCycle_returns2_whenSessionMissing() async throws {
+        let fx = try await makeFixture(secrets: [:])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let status = await runHelper(.fullCycle, deps: fx.deps)
+        #expect(status == 2)
+        #expect(fx.log.all.contains { $0.stage == "token_missing" })
+    }
+
+    @Test func fullCycle_returns2_whenStoredSessionIsUnreadable() async throws {
+        let fx = try await makeFixture(secrets: [
+            "tapedeck.source.session:default": "eyJhbGciOiJIUzI1NiJ9.bare-jwt.sig"
+        ])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        let status = await runHelper(.fullCycle, deps: fx.deps)
+        #expect(status == 2)
+        #expect(fx.log.all.contains { $0.stage == "token_missing" })
+    }
+
+    @Test func fullCycle_savesRefreshedSession() async throws {
+        let nearlyExpired = try PlaudCredentials.test(expiresAt: 100 + 60_000).json()
+        let fx = try await makeFixture(secrets: ["tapedeck.source.session:default": nearlyExpired])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        URLProtocolStub.register(sessionId: fx.sessionId, "refresh", matching: { req in
+            req.url?.path == "/user-app/auth/workspace/refresh/ws_test"
+        }, handler: { req in
+            URLProtocolStub.jsonResponse(for: req, fixture: "source/refresh_ok.json")
+        })
+        stubSourceEmptyList(fx)
+
+        let status = await runHelper(.fullCycle, deps: fx.deps)
+        #expect(status == 0)
+        let stored = try #require(fx.secrets.get(service: "tapedeck.source.session", account: "default"))
+        let saved = try PlaudCredentials(json: stored)
+        #expect(saved.token == "refreshed-access.eyJyZWdpb24iOiJhd3M6ZXUtY2VudHJhbC0xIn0.sig")
+        #expect(saved.refreshToken == "rotated-refresh.eyJyZWdpb24iOiJhd3M6ZXUtY2VudHJhbC0xIn0.sig")
+        #expect(saved.expiresAt == 100 + 86_400_000)
+    }
+
+    @Test func fullCycle_marksTokenExpired_whenRefreshIsRejected() async throws {
+        let nearlyExpired = try PlaudCredentials.test(expiresAt: 100 + 60_000).json()
+        let fx = try await makeFixture(secrets: ["tapedeck.source.session:default": nearlyExpired])
+        defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
+        URLProtocolStub.register(sessionId: fx.sessionId, "refresh", matching: { req in
+            req.url?.path == "/user-app/auth/workspace/refresh/ws_test"
+        }, handler: { req in
+            URLProtocolStub.jsonResponse(for: req, status: 401, fixture: "source/unauthorised.json")
+        })
+
+        let status = await runHelper(.fullCycle, deps: fx.deps)
+        #expect(status == 4)
+        let tokenStatus = try fx.store.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key='token_status'")
+        }
+        #expect(tokenStatus == "expired")
+        #expect(fx.secrets.get(service: "tapedeck.source.session", account: "default") == nearlyExpired)
     }
 
     @Test func fullCycle_succeeds_withoutDeepgramOrGemini_whenAutoFlagsAreOff() async throws {
         let fx = try await makeFixture(secrets: [
-            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig"
+            "tapedeck.source.session:default": Self.storedSession
         ])
         defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
         stubSourceEmptyList(fx)
@@ -301,7 +364,7 @@ struct HelperRunnerTests {
 
     @Test func fullCycle_exitsThree_whenAutoTranscribeOnButDeepgramMissing() async throws {
         let fx = try await makeFixture(secrets: [
-            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig"
+            "tapedeck.source.session:default": Self.storedSession
         ])
         defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
         try fx.store.write { db in
@@ -319,7 +382,7 @@ struct HelperRunnerTests {
 
     @Test func runFullCycle_writesStageTransitions_andEndsIdle() async throws {
         let fx = try await makeFixture(secrets: [
-            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.source.session:default": Self.storedSession,
             "tapedeck.deepgram.key:default": "dg",
             "tapedeck.gemini.key:default": "gm",
         ])
@@ -349,7 +412,7 @@ struct HelperRunnerTests {
 
     @Test func runFullCycle_clearsToIdle_evenWhenPipelineThrows() async throws {
         let fx = try await makeFixture(secrets: [
-            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.source.session:default": Self.storedSession,
         ])
         defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
         let status = await runHelper(.fullCycle, deps: fx.deps)
@@ -362,7 +425,7 @@ struct HelperRunnerTests {
 
     @Test func fullCycle_exitsThree_whenAutoClassifyOnButGeminiMissing() async throws {
         let fx = try await makeFixture(secrets: [
-            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.source.session:default": Self.storedSession,
             "tapedeck.deepgram.key:default": "dg"
         ])
         defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
@@ -383,7 +446,7 @@ struct HelperRunnerTests {
 
     @Test func runTranscribePending_setsStageThenClears() async throws {
         let fx = try await makeFixture(secrets: [
-            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.source.session:default": Self.storedSession,
             "tapedeck.deepgram.key:default": "dg",
         ])
         defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
@@ -400,7 +463,7 @@ struct HelperRunnerTests {
 
     @Test func runTranscribeSource_setsStageThenClears() async throws {
         let fx = try await makeFixture(secrets: [
-            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.source.session:default": Self.storedSession,
             "tapedeck.deepgram.key:default": "dg",
         ])
         defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
@@ -417,7 +480,7 @@ struct HelperRunnerTests {
 
     @Test func runClassifyPending_setsStageThenClears() async throws {
         let fx = try await makeFixture(secrets: [
-            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.source.session:default": Self.storedSession,
             "tapedeck.gemini.key:default": "gm",
         ])
         defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
@@ -434,7 +497,7 @@ struct HelperRunnerTests {
 
     @Test func runClassifySource_setsStageThenClears() async throws {
         let fx = try await makeFixture(secrets: [
-            "tapedeck.source.jwt:default": "t.eyJzdWIiOiJ4In0.sig",
+            "tapedeck.source.session:default": Self.storedSession,
             "tapedeck.gemini.key:default": "gm",
         ])
         defer { URLProtocolStub.clear(sessionId: fx.sessionId) }
@@ -548,10 +611,16 @@ struct HelperRunnerTests {
 
 // Helper for thread-safe in-memory secret lookups inside Sendable closures.
 private final class SecretsBox: @unchecked Sendable {
-    private let secrets: [String: String]
+    private let lock = NSLock()
+    private var secrets: [String: String]
     init(secrets: [String: String]) { self.secrets = secrets }
     func get(service: String, account: String) -> String? {
-        secrets["\(service):\(account)"]
+        lock.lock(); defer { lock.unlock() }
+        return secrets["\(service):\(account)"]
+    }
+    func set(service: String, account: String, value: String) {
+        lock.lock(); defer { lock.unlock() }
+        secrets["\(service):\(account)"] = value
     }
 }
 

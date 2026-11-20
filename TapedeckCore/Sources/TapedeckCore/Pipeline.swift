@@ -12,13 +12,18 @@ public actor Pipeline {
         public let gemini: GeminiClient
         public let logger: any SyncLog
         public let now: @Sendable () -> Int64
+        /// Stores credentials after `ensureToken` refreshes them. Only sync cycles
+        /// refresh, so classify/transcribe pipelines can leave the no-op default.
+        public let saveCredentials: @Sendable (PlaudCredentials) throws -> Void
 
         public init(store: Store, layout: Layout, source: SourceClient,
                     deepgram: DeepgramClient, gemini: GeminiClient,
-                    logger: any SyncLog, now: @Sendable @escaping () -> Int64) {
+                    logger: any SyncLog, now: @Sendable @escaping () -> Int64,
+                    saveCredentials: @Sendable @escaping (PlaudCredentials) throws -> Void = { _ in }) {
             self.store = store; self.layout = layout; self.source = source
             self.deepgram = deepgram; self.gemini = gemini
             self.logger = logger; self.now = now
+            self.saveCredentials = saveCredentials
         }
     }
     public enum PipelineError: Error, Equatable { case tokenExpired, tokenMissing }
@@ -51,7 +56,7 @@ public actor Pipeline {
     }
 
     public func syncOnly() async throws {
-        try ensureToken()
+        try await ensureToken()
         try await deps.source.discoverHost()
         try await listRemote()
         try await downloadNew()
@@ -65,11 +70,17 @@ public actor Pipeline {
         try touchLastSync()
     }
 
-    func ensureToken() throws {
+    /// Stops if the token is already known to be expired, otherwise refreshes it
+    /// when it is about to expire. A rejected refresh throws `.unauthorised`.
+    func ensureToken() async throws {
         let status: String? = try deps.store.read { db in
             try String.fetchOne(db, sql: "SELECT value FROM app_state WHERE key = 'token_status'")
         }
         if status == "expired" { throw PipelineError.tokenExpired }
+        if let refreshed = try await deps.source.refreshIfNeeded(now: deps.now()) {
+            try deps.saveCredentials(refreshed)
+            deps.logger.info("token_refreshed", source: nil)
+        }
     }
 
     func touchLastSync() throws {

@@ -1,0 +1,109 @@
+{
+  "status": 0,
+  "data": {
+    "node": {
+      "node_id": "on_f_831cd03902e3336766fbe551874ef6f7",
+      "parent_id": "on_w_831cd03902e3336766fbe551874ef6f7",
+      "type": 2,
+      "name": "2026-11-10 13:16:53",
+      "sort_key": "a0",
+      "system_folder_type": 0,
+      "icon": null,
+      "color": null,
+      "trash_info": null,
+      "created_at": 1794473853000,
+      "created_at_show": 1794316613000,
+      "updated_at": 1794473853000,
+      "updated_at_show": 1794473853000,
+      "version_ms": 1794473851000,
+      "is_name_edit": 0,
+      "record_time": 1794316613000,
+      "folder": {
+        "folder_id": "on_w_831cd03902e3336766fbe551874ef6f7",
+        "name": "2026-11-10 13:16:53",
+        "system_folder_type": 0
+      },
+      "display_folder": {
+        "folder_id": "n_system_mem_EXAMPLE_1",
+        "name": "Recordings",
+        "system_folder_type": 1
+      },
+      "breadcrumbs": [
+        { "node_id": "n_system_mem_EXAMPLE_1", "name": "Recordings", "system_folder_type": 1 },
+        { "node_id": "on_w_831cd03902e3336766fbe551874ef6f7", "name": "2026-11-10 13:16:53", "system_folder_type": 0 },
+        { "node_id": "on_f_831cd03902e3336766fbe551874ef6f7", "name": "2026-11-10 13:16:53", "system_folder_type": 0 }
+      ]
+    },
+    "meta": {
+      "file_id": "of_831cd03902e3336766fbe551874ef6f7",
+      "creator_member_id": "mem_EXAMPLE",
+      "file_type": "REC",
+      "status": 1,
+      "duration": 10877000,
+      "size_bytes": 0,
+      "timezone_iana": "Europe/London",
+      "start_time": 1794316613000,
+      "scene_source": 881,
+      "serial_number": "8810B00000000001",
+      "keywords": ["[]"],
+      "task_status": null,
+      "task_status_reason": null,
+      "file_info": null,
+      "created_at": 1794473853000,
+      "updated_at": 1794473853000,
+      "version_ms": 1794473851000,
+      "extra": {
+        "highlight_file_id": "",
+        "artifact_session_id": "",
+        "artifact_id": "",
+        "artifact_version": ""
+      }
+    },
+    "objects": [
+      {
+        "object_id": "oo_au_831cd03902e3336766fbe551874ef6f7",
+        "object_type": "AUDIO",
+        "language": null,
+        "content_id": "oc_au_831cd03902e3336766fbe551874ef6f7",
+        "content_url": "https://euc1-prod-plaud-content-storage.s3-accelerate.amazonaws.com/permanent/ws_EXAMPLE/mem_EXAMPLE/file_audio/of_831cd03902e3336766fbe551874ef6f7/oc_au_831cd03902e3336766fbe551874ef6f7.ogg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAEXAMPLEEXAMPLE00%2F20261120%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20261120T120000Z&X-Amz-Expires=3600&X-Amz-Security-Token=EXAMPLE-SESSION-TOKEN&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000",
+        "mime_type": "audio/ogg",
+        "safe_scan_status": 1,
+        "object_info": { "duration": 10877000, "start_time": 1794316613000 },
+        "version_ms": 1794473851000,
+        "updated_at": 1794473854219,
+        "object_size": 46412288,
+        "task_id": null,
+        "task_type": null,
+        "task_status": null,
+        "start_time": 1794316613000,
+        "relation_content_ids": null,
+        "extra": { "last_trans_device_id": "", "last_trans_app_platform": "", "has_replaced_speaker": false },
+        "rating": null
+      },
+      {
+        "object_id": "o_00000000000000000000000000000b01",
+        "object_type": "AUDIO_TRANSCODED",
+        "language": null,
+        "content_id": "c_00000000000000000000000000000b02",
+        "content_url": "https://euc1-prod-plaud-content-storage.s3-accelerate.amazonaws.com/permanent/ws_EXAMPLE/mem_EXAMPLE/file_audio/of_831cd03902e3336766fbe551874ef6f7/c_00000000000000000000000000000b02.mp3?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAEXAMPLEEXAMPLE00%2F20261120%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20261120T120000Z&X-Amz-Expires=3600&X-Amz-Security-Token=EXAMPLE-SESSION-TOKEN&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000",
+        "mime_type": "audio/mpeg",
+        "safe_scan_status": 0,
+        "object_info": { "duration": 10877010, "start_time": 1794316613000 },
+        "version_ms": 1794473851000,
+        "updated_at": 1794473854219,
+        "object_size": 66638620,
+        "task_id": null,
+        "task_type": null,
+        "task_status": null,
+        "start_time": 1794316613000,
+        "relation_content_ids": null,
+        "extra": { "last_trans_device_id": "", "last_trans_app_platform": "", "has_replaced_speaker": false },
+        "rating": null
+      }
+    ],
+    "task": { "in_progress_tasks": [], "finished_unread_tasks": [] },
+    "note_tasks": [],
+    "instruction_prefill": { "mode": "default" },
+    "relation_content_mapping": null
+  }
+}

@@ -1,9 +1,10 @@
 {
   "status": -302,
-  "msg": "user region mismatch",
+  "msg": "workspace region mismatch",
   "data": {
     "domains": {
-      "api": "https://api-euc1.plaud.ai"
+      "api": "https://api-euc1.plaud.ai",
+      "iot_ws_api": "wss://api-iot-euc1.plaud.ai"
     }
   }
 }

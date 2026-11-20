@@ -18,7 +18,7 @@ struct PipelineTranscribeTests {
             logsRoot: FileManager.default.temporaryDirectory.appending(path: "l-\(UUID())"))
         return Pipeline(deps: .init(
             store: store, layout: layout,
-            source: SourceClient(token: "t.eyJzdWIiOiJ4In0.sig",
+            source: SourceClient(credentials: .test(),
                                  host: URL(string: "https://api-euc1.plaud.ai")!,
                                  session: .shared),
             deepgram: DeepgramClient(apiKey: "dg", session: .shared),
@@ -63,7 +63,7 @@ struct PipelineTranscribeTests {
         let log = CapturedLog()
         let pipeline = Pipeline(deps: .init(
             store: store, layout: layout,
-            source: SourceClient(token: "t.eyJzdWIiOiJ4In0.sig",
+            source: SourceClient(credentials: .test(),
                                  host: URL(string: "https://api-euc1.plaud.ai")!,
                                  session: .shared),
             deepgram: DeepgramClient(apiKey: "dg", session: .shared),
@@ -74,7 +74,7 @@ struct PipelineTranscribeTests {
             sourceId: "rec-1", filename: "M",
             startedAt: 1, durationMs: 1, filesize: 1,
             audioExtension: "opus", lastSeenAt: 1))
-        try recordings.setDownloaded(sourceId: "rec-1", ext: "opus", at: 2)
+        try recordings.setDownloaded(sourceId: "rec-1", ext: "opus", filesize: 4, at: 2)
 
         try await pipeline.transcribeNew()
 
@@ -108,7 +108,7 @@ struct PipelineTranscribeTests {
     private func makePipelineWith(_ fx: Fixture) -> Pipeline {
         Pipeline(deps: .init(
             store: fx.store, layout: fx.layout,
-            source: SourceClient(token: "t.eyJzdWIiOiJ4In0.sig",
+            source: SourceClient(credentials: .test(),
                                  host: URL(string: "https://api-euc1.plaud.ai")!,
                                  session: fx.session),
             deepgram: DeepgramClient(apiKey: "dg", session: fx.session),
@@ -141,7 +141,7 @@ struct PipelineTranscribeTests {
                           startedAt: 1, durationMs: 60_000, filesize: 4,
                           audioExtension: ext, lastSeenAt: 1)
         try fx.recordings.upsertFromRemote(r)
-        try fx.recordings.setDownloaded(sourceId: "rec-1", ext: ext, at: 2)
+        try fx.recordings.setDownloaded(sourceId: "rec-1", ext: ext, filesize: 4, at: 2)
         if let bytes = audioBytes {
             let date = Date(timeIntervalSince1970: TimeInterval(r.startedAt) / 1000)
             let dir = fx.layout.audioDir(date: date)
@@ -423,7 +423,7 @@ struct PipelineTranscribeTests {
                               startedAt: 1, durationMs: 60_000, filesize: 4,
                               audioExtension: "opus", lastSeenAt: 1)
             try fx.recordings.upsertFromRemote(r)
-            try fx.recordings.setDownloaded(sourceId: sid, ext: "opus", at: 2)
+            try fx.recordings.setDownloaded(sourceId: sid, ext: "opus", filesize: 4, at: 2)
             let date = Date(timeIntervalSince1970: TimeInterval(r.startedAt) / 1000)
             let dir = fx.layout.audioDir(date: date)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
